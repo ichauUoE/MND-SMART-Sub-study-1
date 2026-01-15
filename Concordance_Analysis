@@ -1,0 +1,120 @@
+#------------------------------------------------------------
+# Variable Group 10 (new): Participant–Caregiver disagreement at screening
+# Outcomes: StoppedIMP, FullWithdrawal
+# Population: SS1 only + caregiver consented (CarerConsentSS1==1)
+# Only include dyads with BOTH responses present for each question analysed
+#------------------------------------------------------------
+library(tidyverse)
+library(tidyr)
+library(purrr)
+library(tibble)
+library(ggplot2)
+library(broom)       
+library(janitor)  
+library(stringr)
+
+#Upload main dataset
+TraMemPlaArms <- read_csv("MNDSMART_MaindatasetDS v2.0.csv")
+
+#---------------------------
+# 0) Define dyad population
+#---------------------------
+Dyads <- TraMemPlaArms %>%
+  filter(ConsentSS1 == 1, CarerConsentSS1 == 1)
+
+#---------------------------------------
+# 1) Helper: clean screening responses
+#    1=Yes, 2=No, 3=Unsure, 4=Prefer not to say
+#    Treat 4 (and anything outside 1:3) as missing for analyses
+#---------------------------------------
+clean_scrn_resp <- function(x) {
+  x <- suppressWarnings(as.integer(as.character(x)))
+  dplyr::if_else(x %in% 1:3, x, NA_integer_)
+}
+
+#--------------------------------------------------------------
+#Screening
+# 2) Create paired variables + disagreement flags (item-level)
+#--------------------------------------------------------------
+Dyads <- Dyads %>%
+  mutate(
+    # Cleaned participant responses
+    prt_time   = clean_scrn_resp(TimeCommitmentPrtExpctScrn),
+    prt_pos    = clean_scrn_resp(PositiveEffectPrtExpctScrn),
+    prt_se     = clean_scrn_resp(SideEffectsPrtExpctScrn),
+    prt_dist   = clean_scrn_resp(DistanceToClinicPrtExpctScrn),
+    
+    # Cleaned caregiver responses
+    crr_time   = clean_scrn_resp(TimeCommitmentCrrExpctScrn),
+    crr_pos    = clean_scrn_resp(PositiveEffectCrrExpctScrn),
+    crr_se     = clean_scrn_resp(SideEffectsCrrExpctScrn),
+    crr_dist   = clean_scrn_resp(DistanceToClinicCrrExpctScrn),
+    
+    # Disagreement flags: defined ONLY when both responses present
+    dis_time = if_else(!is.na(prt_time) & !is.na(crr_time) & prt_time != crr_time, 1L,
+                       if_else(!is.na(prt_time) & !is.na(crr_time), 0L, NA_integer_)),
+    dis_pos  = if_else(!is.na(prt_pos)  & !is.na(crr_pos)  & prt_pos  != crr_pos,  1L,
+                       if_else(!is.na(prt_pos)  & !is.na(crr_pos),  0L, NA_integer_)),
+    dis_se   = if_else(!is.na(prt_se)   & !is.na(crr_se)   & prt_se   != crr_se,   1L,
+                       if_else(!is.na(prt_se)   & !is.na(crr_se),   0L, NA_integer_)),
+    dis_dist = if_else(!is.na(prt_dist) & !is.na(crr_dist) & prt_dist != crr_dist, 1L,
+                       if_else(!is.na(prt_dist) & !is.na(crr_dist), 0L, NA_integer_))
+  )
+
+#---------------------------------------
+# 3) Table: response distributions + paired disagreement
+#---------------------------------------
+# Participant and caregiver response % (among responders), plus paired N and disagreement %
+make_item_summary <- function(df, prt_var, crr_var, dis_var, item_label) {
+  
+  # Participant distribution among non-missing
+  prt_dist <- df %>%
+    filter(!is.na(.data[[prt_var]])) %>%
+    count(resp = .data[[prt_var]]) %>%
+    mutate(pct = 100 * n / sum(n),
+           who = "Participant")
+  
+  # Caregiver distribution among non-missing
+  crr_dist <- df %>%
+    filter(!is.na(.data[[crr_var]])) %>%
+    count(resp = .data[[crr_var]]) %>%
+    mutate(pct = 100 * n / sum(n),
+           who = "Caregiver")
+  
+  # Paired disagreement among complete dyads for that item
+  paired <- df %>%
+    filter(!is.na(.data[[dis_var]])) %>%
+    summarise(
+      paired_n = n(),
+      disagree_n = sum(.data[[dis_var]] == 1L),
+      disagree_pct = 100 * mean(.data[[dis_var]] == 1L)
+    ) %>%
+    mutate(item = item_label)
+  
+  list(prt_dist = prt_dist, crr_dist = crr_dist, paired = paired)
+}
+
+sum_time <- make_item_summary(Dyads, "prt_time", "crr_time", "dis_time", "Time commitment")
+sum_pos  <- make_item_summary(Dyads, "prt_pos",  "crr_pos",  "dis_pos",  "Positive effect")
+sum_se   <- make_item_summary(Dyads, "prt_se",   "crr_se",   "dis_se",   "Side effects")
+sum_dist <- make_item_summary(Dyads, "prt_dist", "crr_dist", "dis_dist", "Distance to clinic")
+
+paired_summary <- bind_rows(sum_time$paired, sum_pos$paired, sum_se$paired, sum_dist$paired)
+
+# Optional: a single table for participant/caregiver response distributions by item
+resp_dist_long <- bind_rows(
+  sum_time$prt_dist %>% mutate(item = "Time commitment"),
+  sum_time$crr_dist %>% mutate(item = "Time commitment"),
+  sum_pos$prt_dist  %>% mutate(item = "Positive effect"),
+  sum_pos$crr_dist  %>% mutate(item = "Positive effect"),
+  sum_se$prt_dist   %>% mutate(item = "Side effects"),
+  sum_se$crr_dist   %>% mutate(item = "Side effects"),
+  sum_dist$prt_dist %>% mutate(item = "Distance to clinic"),
+  sum_dist$crr_dist %>% mutate(item = "Distance to clinic")
+) %>%
+  mutate(resp = factor(resp, levels = 1:3, labels = c("Yes", "No", "Unsure"))) %>%
+  select(item, who, resp, n, pct)
+
+# Print summaries
+paired_summary
+resp_dist_long
