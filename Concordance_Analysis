@@ -33,6 +33,16 @@ SS1 <- SS1 %>%
     StoppedBeforeM6 = if_else(!is.na(DateofStoppingIMP)   & DateofStoppingIMP  < Month6_Date, 1L, 0L),
     WithdrawnBeforeM6 = if_else(!is.na(DateofFullWithdrawal) & DateofFullWithdrawal < Month6_Date, 1L, 0L)
   )
+#------------------------------------------------------------
+# Variable Group 10 (new): Participant–Caregiver disagreement at screening
+# Outcomes: StoppedIMP, FullWithdrawal
+# Population: SS1 only + caregiver consented (CarerConsentSS1==1)
+# Only include dyads with BOTH responses present for each question analysed
+#------------------------------------------------------------
+library(dplyr)
+library(tidyr)
+library(broom)
+
 #---------------------------
 # 0) Define dyad population
 #---------------------------
@@ -44,7 +54,7 @@ Dyads <- SS1 %>%
 #    1=Yes, 2=No, 3=Unsure, 4=Prefer not to say
 #    Treat 4 (and anything outside 1:3) as missing for analyses
 #---------------------------------------
-clean_scrn_resp <- function(x) {
+clean_resp_1to3 <- function(x) {
   x <- suppressWarnings(as.integer(as.character(x)))
   dplyr::if_else(x %in% 1:3, x, NA_integer_)
 }
@@ -56,49 +66,110 @@ clean_scrn_resp <- function(x) {
 Dyads <- Dyads %>%
   mutate(
     # Cleaned participant responses
-    prt_time   = clean_scrn_resp(TimeCommitmentPrtExpctScrn),
-    prt_pos    = clean_scrn_resp(PositiveEffectPrtExpctScrn),
-    prt_se     = clean_scrn_resp(SideEffectsPrtExpctScrn),
-    prt_dist   = clean_scrn_resp(DistanceToClinicPrtExpctScrn),
+    scrn_prt_time   = clean_resp_1to3(TimeCommitmentPrtExpctScrn),
+    scrn_prt_pos    = clean_resp_1to3(PositiveEffectPrtExpctScrn),
+    scrn_prt_se     = clean_resp_1to3(SideEffectsPrtExpctScrn),
+    scrn_prt_dist   = clean_resp_1to3(DistanceToClinicPrtExpctScrn),
     
     # Cleaned caregiver responses
-    crr_time   = clean_scrn_resp(TimeCommitmentCrrExpctScrn),
-    crr_pos    = clean_scrn_resp(PositiveEffectCrrExpctScrn),
-    crr_se     = clean_scrn_resp(SideEffectsCrrExpctScrn),
-    crr_dist   = clean_scrn_resp(DistanceToClinicCrrExpctScrn),
+    scrn_crr_time   = clean_resp_1to3(TimeCommitmentCrrExpctScrn),
+    scrn_crr_pos    = clean_resp_1to3(PositiveEffectCrrExpctScrn),
+    scrn_crr_se     = clean_resp_1to3(SideEffectsCrrExpctScrn),
+    scrn_crr_dist   = clean_resp_1to3(DistanceToClinicCrrExpctScrn),
     
-    # Disagreement flags: defined ONLY when both responses present
-    dis_time = if_else(!is.na(prt_time) & !is.na(crr_time) & prt_time != crr_time, 1L,
-                       if_else(!is.na(prt_time) & !is.na(crr_time), 0L, NA_integer_)),
-    dis_pos  = if_else(!is.na(prt_pos)  & !is.na(crr_pos)  & prt_pos  != crr_pos,  1L,
-                       if_else(!is.na(prt_pos)  & !is.na(crr_pos),  0L, NA_integer_)),
-    dis_se   = if_else(!is.na(prt_se)   & !is.na(crr_se)   & prt_se   != crr_se,   1L,
-                       if_else(!is.na(prt_se)   & !is.na(crr_se),   0L, NA_integer_)),
-    dis_dist = if_else(!is.na(prt_dist) & !is.na(crr_dist) & prt_dist != crr_dist, 1L,
-                       if_else(!is.na(prt_dist) & !is.na(crr_dist), 0L, NA_integer_))
+    # At least one paired screening response present
+    scrn_any_paired =
+      (!is.na(scrn_prt_time) & !is.na(scrn_crr_time)) |
+      (!is.na(scrn_prt_pos)  & !is.na(scrn_crr_pos))  |
+      (!is.na(scrn_prt_se)   & !is.na(scrn_crr_se))   |
+      (!is.na(scrn_prt_dist) & !is.na(scrn_crr_dist))
+  ) %>%
+  filter(scrn_any_paired)
+
+#------------------------------
+#3) Censor Month 2 and Month 6
+#------------------------------
+Dyads_M2 <- Dyads %>% filter(StoppedBeforeM2 == 0 & WithdrawnBeforeM2 == 0)
+Dyads_M6 <- Dyads %>% filter(StoppedBeforeM6 == 0 & WithdrawnBeforeM6 == 0)
+
+items_M2 <- tibble::tribble(
+  ~item,                 ~prt_col,                         ~crr_col,
+  "Time commitment",     "TimeCommitmentPrtFeedback2m",     "NegOtherActivitiesCrrFeedback2m",
+  "Drug effect expected","DrugEffectExpectedPrtFeedback2m", "DrugEffectExpectedCrrFeedback2m",
+  "Participation As expected",         "ParticAsExpectedPrtFeedback2m",   "ParticAsExpectedCrrFeedback2m",
+  "Enjoyed Participation", "EnjoyedParticPrtFeedback2m",      "EnjoyedInvolvementCrrFeedback2m",
+  "Plan to continue participating",  "KeepParticPrtFeedback2m",         "SupportiveCrrFeedback2m",
+  "Overall experience",  "OverallExperiencePrtFeedback2m",  "OverallExperienceCrrFeedback2m",
+  "Info leaflet",        "InfoLeafletPrtFeedback2m",        "InfoLeafletCrrFeedback2m",
+  "Level of contact",    "LevelOfContactPrtFeedback2m",     "LevelOfContactCrrFeedback2m",
+  "Drug delivered home", "DrugDeliverHomePrtFeedback2m",    "DrugDeliverHomeCrrFeedback2m",
+  "Ease of taking drug", "EaseOfTakingDrugPrtFeedback2m",   "EaseOfTakingDrugCrrFeedback2m",
+  "Liquid formulation",  "DrugLiquidFormPrtFeedback2m",     "DrugLiquidFormCrrFeedback2m",
+  "Length of appts",     "LengthAppntsPrtFeedback2m",       "LengthAppntsCrrFeedback2m",
+  "Remote appts",        "RemoteAppntsPrtFeedback2m",       "RemoteAppntsCrrFeedback2m",
+  "Assessments/tests",   "AssessmentsTestsPrtFeedback2m",   "AssessmentsTestsCrrFeedback2m"
+)
+
+items_M6 <- items_M2 %>%
+  mutate(
+    prt_col = gsub("2m$", "6m", prt_col),
+    crr_col = gsub("2m$", "6m", crr_col)
   )
 
 #---------------------------------------
-# 3) Table: response distributions + paired disagreement
+# 4) Generic creator: cleaned prt/crr vars + disagreement flag (per item)
+#    Disagreement defined only when both present
 #---------------------------------------
-# Participant and caregiver response % (among responders), plus paired N and disagreement %
+add_item_vars <- function(df, items_tbl, prefix = "") {
+  
+  out <- df
+  
+  for(i in seq_len(nrow(items_tbl))){
+    
+    item  <- items_tbl$item[i]
+    pcol  <- items_tbl$prt_col[i]
+    ccol  <- items_tbl$crr_col[i]
+    
+    # Safe syntactic names
+    stub <- paste0(prefix, gsub("[^A-Za-z0-9]+", "_", tolower(item)))
+    
+    prt_var <- paste0("prt_", stub)
+    crr_var <- paste0("crr_", stub)
+    dis_var <- paste0("dis_", stub)
+    
+    out <- out %>%
+      mutate(
+        !!prt_var := clean_resp_1to3(.data[[pcol]]),
+        !!crr_var := clean_resp_1to3(.data[[ccol]]),
+        !!dis_var := if_else(!is.na(.data[[prt_var]]) & !is.na(.data[[crr_var]]) &
+                               .data[[prt_var]] != .data[[crr_var]], 1L,
+                             if_else(!is.na(.data[[prt_var]]) & !is.na(.data[[crr_var]]), 0L, NA_integer_))
+      )
+  }
+  
+  out
+}
+
+Dyads_M2 <- add_item_vars(Dyads_M2, items_M2, prefix = "m2_")
+Dyads_M6 <- add_item_vars(Dyads_M6, items_M6, prefix = "m6_")
+
+#---------------------------------------
+# 5) Table builder (harmonised to your screening version)
+#    Participant/caregiver response % (among responders),
+#    paired N and disagreement %
+#---------------------------------------
 make_item_summary <- function(df, prt_var, crr_var, dis_var, item_label) {
   
-  # Participant distribution among non-missing
   prt_dist <- df %>%
     filter(!is.na(.data[[prt_var]])) %>%
     count(resp = .data[[prt_var]]) %>%
-    mutate(pct = 100 * n / sum(n),
-           who = "Participant")
+    mutate(pct = 100 * n / sum(n), who = "Participant")
   
-  # Caregiver distribution among non-missing
   crr_dist <- df %>%
     filter(!is.na(.data[[crr_var]])) %>%
     count(resp = .data[[crr_var]]) %>%
-    mutate(pct = 100 * n / sum(n),
-           who = "Caregiver")
+    mutate(pct = 100 * n / sum(n), who = "Caregiver")
   
-  # Paired disagreement among complete dyads for that item
   paired <- df %>%
     filter(!is.na(.data[[dis_var]])) %>%
     summarise(
@@ -111,27 +182,48 @@ make_item_summary <- function(df, prt_var, crr_var, dis_var, item_label) {
   list(prt_dist = prt_dist, crr_dist = crr_dist, paired = paired)
 }
 
-sum_time <- make_item_summary(Dyads, "prt_time", "crr_time", "dis_time", "Time commitment")
-sum_pos  <- make_item_summary(Dyads, "prt_pos",  "crr_pos",  "dis_pos",  "Positive effect")
-sum_se   <- make_item_summary(Dyads, "prt_se",   "crr_se",   "dis_se",   "Side effects")
-sum_dist <- make_item_summary(Dyads, "prt_dist", "crr_dist", "dis_dist", "Distance to clinic")
+# Helper to generate full tables for a timepoint
+build_tables_for_timepoint <- function(df, items_tbl, prefix = "") {
+  
+  summaries <- pmap(
+    list(items_tbl$item, items_tbl$item),
+    function(item_label, item_label2){
+      
+      stub <- paste0(prefix, gsub("[^A-Za-z0-9]+", "_", tolower(item_label)))
+      
+      prt_var <- paste0("prt_", stub)
+      crr_var <- paste0("crr_", stub)
+      dis_var <- paste0("dis_", stub)
+      
+      make_item_summary(df, prt_var, crr_var, dis_var, item_label)
+    }
+  )
+  
+  paired_summary <- bind_rows(map(summaries, "paired"))
+  
+  resp_dist_long <- bind_rows(
+    map2_dfr(summaries, items_tbl$item, ~ .x$prt_dist %>% mutate(item = .y)),
+    map2_dfr(summaries, items_tbl$item, ~ .x$crr_dist %>% mutate(item = .y))
+  ) %>%
+    mutate(resp = factor(resp, levels = 1:3, labels = c("Yes", "No", "Unsure"))) %>%
+    select(item, who, resp, n, pct)
+  
+  list(paired_summary = paired_summary, resp_dist_long = resp_dist_long)
+}
 
-paired_summary <- bind_rows(sum_time$paired, sum_pos$paired, sum_se$paired, sum_dist$paired)
+tab_M2 <- build_tables_for_timepoint(Dyads_M2, items_M2, prefix = "m2_")
+tab_M6 <- build_tables_for_timepoint(Dyads_M6, items_M6, prefix = "m6_")
 
-# Optional: a single table for participant/caregiver response distributions by item
-resp_dist_long <- bind_rows(
-  sum_time$prt_dist %>% mutate(item = "Time commitment"),
-  sum_time$crr_dist %>% mutate(item = "Time commitment"),
-  sum_pos$prt_dist  %>% mutate(item = "Positive effect"),
-  sum_pos$crr_dist  %>% mutate(item = "Positive effect"),
-  sum_se$prt_dist   %>% mutate(item = "Side effects"),
-  sum_se$crr_dist   %>% mutate(item = "Side effects"),
-  sum_dist$prt_dist %>% mutate(item = "Distance to clinic"),
-  sum_dist$crr_dist %>% mutate(item = "Distance to clinic")
-) %>%
-  mutate(resp = factor(resp, levels = 1:3, labels = c("Yes", "No", "Unsure"))) %>%
-  select(item, who, resp, n, pct)
+paired_summary_M2 <- tab_M2$paired_summary
+resp_dist_long_M2 <- tab_M2$resp_dist_long
 
-# Print summaries
+paired_summary_M6 <- tab_M6$paired_summary
+resp_dist_long_M6 <- tab_M6$resp_dist_long
+
+# Print
 paired_summary
 resp_dist_long
+paired_summary_M2
+resp_dist_long_M2
+paired_summary_M6
+resp_dist_long_M6
