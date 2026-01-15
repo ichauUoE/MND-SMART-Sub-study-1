@@ -1,0 +1,1525 @@
+library(tidyverse)
+library(tidyr)
+library(purrr)
+library(tibble)
+library(ggplot2)
+library(broom)       
+library(janitor)  
+library(stringr)
+
+TraMemPlaArms <- read_csv("MNDSMART_MaindatasetDS v2.0.csv")
+
+SS1 <- TraMemPlaArms %>% 
+  filter(ConsentSS1 == 1)
+#-------------------------------------------------------------------------
+#Total number of consents, stopped IMP, and withdrawn
+#------------------------------------------------------------------------
+Consent_Prt <- table(TraMemPlaArms$ConsentSS1)
+print(Consent_Prt)
+
+Consent_Crr <- table(TraMemPlaArms$CarerContributeSS1)
+print(Consent_Crr)
+
+Full_Withdrawal <- table(TraMemPlaArms$FullWithdrawal)
+print(Full_Withdrawal)
+
+Stopped_IMP <-table(TraMemPlaArms$Change)
+
+Full_Withdrawal_Stopped_IMP <- table(TraMemPlaArms$StoppedIMP,TraMemPlaArms$FullWithdrawal)
+print(Full_Withdrawal_Stopped_IMP)
+
+Time_to_Stop_IMP <- TraMemPlaArms %>%
+  filter(ConsentSS1 == 1) %>% 
+  mutate(
+    TimetoStopIMP = na_if(TimetoStopIMP, "#NULL!"),
+    TimetoStopIMP = as.numeric(TimetoStopIMP),
+    TimetoStopIMP_months = TimetoStopIMP / 30.44   # convert days → months
+  ) %>%
+  summarise(
+    total   = sum(!is.na(TimetoStopIMP_months)),
+    missing = sum(is.na(TimetoStopIMP_months)),
+    mean    = mean(TimetoStopIMP_months, na.rm = TRUE),
+    median  = median(TimetoStopIMP_months, na.rm = TRUE),
+    sd      = sd(TimetoStopIMP_months, na.rm = TRUE),
+    min     = min(TimetoStopIMP_months, na.rm = TRUE),
+    max     = max(TimetoStopIMP_months, na.rm = TRUE),
+    q25     = quantile(TimetoStopIMP_months, 0.25, na.rm = TRUE),
+    q75     = quantile(TimetoStopIMP_months, 0.75, na.rm = TRUE),
+    IQR     = IQR(TimetoStopIMP_months, na.rm = TRUE)
+  )
+print(Time_to_Stop_IMP)
+
+Time_to_Withdraw <- TraMemPlaArms %>% 
+  filter(ConsentSS1 == 1) %>% 
+  mutate(
+    TimetoFullW = na_if(TimetoFullW, "#NULL!"),
+    TimetoFullW = as.numeric(TimetoFullW),
+    TimetoFullW_months = TimetoFullW / 30.44   # convert days → months
+  ) %>%
+  summarise(
+    total   = sum(!is.na(TimetoFullW_months)),
+    missing = sum(is.na(TimetoFullW_months)),
+    mean    = mean(TimetoFullW_months, na.rm = TRUE),
+    median  = median(TimetoFullW_months, na.rm = TRUE),
+    sd      = sd(TimetoFullW_months, na.rm = TRUE),
+    min     = min(TimetoFullW_months, na.rm = TRUE),
+    max     = max(TimetoFullW_months, na.rm = TRUE),
+    q25     = quantile(TimetoFullW_months, 0.25, na.rm = TRUE),
+    q75     = quantile(TimetoFullW_months, 0.75, na.rm = TRUE),
+    IQR     = IQR(TimetoFullW_months, na.rm = TRUE)
+  )
+print(Time_to_Withdraw)
+
+Active_Off_IMP <- table(TraMemPlaArms$StoppedIMP)
+print(Active_Off_IMP)
+
+Randomisation_to_Death <- TraMemPlaArms %>% 
+  filter(ConsentSS1 == 1) %>% 
+  mutate(
+    Surv = as.numeric(Surv),
+    Surv_months = Surv / 30.44   # convert days → months
+  ) %>%
+  summarise(
+    total   = sum(!is.na(Surv_months)),
+    missing = sum(is.na(Surv_months)),
+    mean    = mean(Surv_months, na.rm = TRUE),
+    median  = median(Surv_months, na.rm = TRUE),
+    sd      = sd(Surv_months, na.rm = TRUE),
+    min     = min(Surv_months, na.rm = TRUE),
+    max     = max(Surv_months, na.rm = TRUE),
+    q25     = quantile(Surv_months, 0.25, na.rm = TRUE),
+    q75     = quantile(Surv_months, 0.75, na.rm = TRUE),
+    IQR     = IQR(Surv_months, na.rm = TRUE)
+  )
+print(Randomisation_to_Death)
+
+#----------------------------------------------------
+#Only SS1 participants demographics
+#----------------------------------------------------
+# Site name distribution
+SS1_Site <- SS1 %>% count(SiteName)
+print(SS1_Site)
+
+# Treatment arm distribution
+SS1_Arm <- SS1 %>% 
+  mutate(Arm = case_when(
+    AllocatedDrug == 1 ~ "Memantine",
+    AllocatedDrug == 2 ~ "Trazodone",
+    AllocatedDrug == 3 ~ "Placebo"
+  )) %>% 
+  count(Arm)
+print(SS1_Arm)
+
+# Sex distribution
+SS1_Sex <- SS1 %>% 
+  mutate(Sex = if_else(SexAtBirth == 1, "Male", "Female")) %>%
+  count(Sex)
+print(SS1_Sex)
+
+#Age at Baseline
+SS1_Age <- SS1 %>% 
+  mutate(BaselineAge = as.numeric(Age)) %>% 
+  summarise(
+    mean_Kings = mean(BaselineAge, na.rm = TRUE),
+    median_Kings = median(BaselineAge, na.rm = TRUE),
+    sd = sd(BaselineAge, na.rm = TRUE),
+    min = min(BaselineAge, na.rm = TRUE),
+    max = max(BaselineAge, na.rm = TRUE),
+    q25 = quantile(BaselineAge, 0.25, na.rm = TRUE),
+    q75 = quantile(BaselineAge, 0.75, na.rm = TRUE),
+    IQR = IQR(BaselineAge, na.rm = TRUE)
+  )
+print(SS1_Age)
+
+# MND subtype
+SS1_Subtype <- SS1 %>% count(MNDSubType)
+print(SS1_Subtype)
+
+# Site of onset
+SS1_Onset <- SS1 %>% count(SiteOfOnset)
+print(SS1_Onset)
+
+SS1_Limb <- SS1 %>% count(Limbonset)
+print(SS1_Limb)
+
+SS1_Bulbar <- SS1 %>% count(Bulbaronset)
+print(SS1_Bulbar)
+
+#King's Staging at Baseline
+SS1_KingsStaging <- SS1 %>% 
+  mutate(KingsStaging = as.numeric(KingsStageBaseline)) %>% 
+  summarise(
+    mean_Kings = mean(KingsStaging, na.rm = TRUE),
+    median_Kings = median(KingsStaging, na.rm = TRUE),
+    sd = sd(KingsStaging, na.rm = TRUE),
+    min = min(KingsStaging, na.rm = TRUE),
+    max = max(KingsStaging, na.rm = TRUE),
+    q25 = quantile(KingsStaging, 0.25, na.rm = TRUE),
+    q75 = quantile(KingsStaging, 0.75, na.rm = TRUE),
+    IQR = IQR(KingsStaging, na.rm = TRUE)
+  )
+print(SS1_KingsStaging)
+
+#ECAS at Baseline
+SS1_ECAS <- SS1 %>% 
+  mutate(ECAS = as.numeric(ECASTotalscoreB)) %>% 
+  summarise(
+    mean_Kings = mean(ECAS, na.rm = TRUE),
+    median_Kings = median(ECAS, na.rm = TRUE),
+    sd = sd(ECAS, na.rm = TRUE),
+    min = min(ECAS, na.rm = TRUE),
+    max = max(ECAS, na.rm = TRUE),
+    q25 = quantile(ECAS, 0.25, na.rm = TRUE),
+    q75 = quantile(ECAS, 0.75, na.rm = TRUE),
+    IQR = IQR(ECAS, na.rm = TRUE)
+  )
+print(SS1_ECAS)
+
+SS1_ECAS_ALS_specific <- SS1 %>% 
+  mutate(ECAS_ALS_Specific = as.numeric(ALSSpecificTotalScoreB)) %>% 
+  summarise(
+    mean = mean(ECAS_ALS_Specific, na.rm = TRUE),
+    median = median(ECAS_ALS_Specific, na.rm = TRUE),
+    sd = sd(ECAS_ALS_Specific, na.rm = TRUE),
+    min = min(ECAS_ALS_Specific, na.rm = TRUE),
+    max = max(ECAS_ALS_Specific, na.rm = TRUE),
+    q25 = quantile(ECAS_ALS_Specific, 0.25, na.rm = TRUE),
+    q75 = quantile(ECAS_ALS_Specific, 0.75, na.rm = TRUE),
+    IQR = IQR(ECAS_ALS_Specific, na.rm = TRUE)
+  )
+print(SS1_ECAS_ALS_specific)
+
+SS1_HealthToday <- SS1 %>% 
+  mutate(HealthToday = as.numeric(HealthTodayB)) %>% 
+  summarise(
+    mean = mean(HealthToday, na.rm = TRUE),
+    median = median(HealthToday, na.rm = TRUE),
+    sd = sd(HealthToday, na.rm = TRUE),
+    min = min(HealthToday, na.rm = TRUE),
+    max = max(HealthToday, na.rm = TRUE),
+    q25 = quantile(HealthToday, 0.25, na.rm = TRUE),
+    q75 = quantile(HealthToday, 0.75, na.rm = TRUE),
+    IQR = IQR(HealthToday, na.rm = TRUE)
+  )
+print(SS1_HealthToday)
+
+SS1_EQ5D5L <- SS1 %>% 
+  mutate(EQ5D5L = as.numeric(EQ5D5L_indexB)) %>% 
+  summarise(
+    mean_Kings = mean(EQ5D5L, na.rm = TRUE),
+    median_Kings = median(EQ5D5L, na.rm = TRUE),
+    sd = sd(EQ5D5L, na.rm = TRUE),
+    min = min(EQ5D5L, na.rm = TRUE),
+    max = max(EQ5D5L, na.rm = TRUE),
+    q25 = quantile(EQ5D5L, 0.25, na.rm = TRUE),
+    q75 = quantile(EQ5D5L, 0.75, na.rm = TRUE),
+    IQR = IQR(EQ5D5L, na.rm = TRUE)
+  )
+print(SS1_EQ5D5L)
+
+#Caregiver
+SS1_Caregiver <- TraMemPlaArms %>% 
+  filter(CarerConsentSS1 == 1)
+print(SS1_Caregiver)
+
+#------------------------------------------------------------------------------------------
+#Participant Expectations at Screening (Trazadone, Memantine, and Placebo Arm only)
+#------------------------------------------------------------------------------------------
+sitenames <- table(SS1$SiteName)
+print(sitenames)
+
+SS1 %>% group_by(PrtExpctScrnId) %>% summarise(Count = n())
+
+SS1_vars <- c("PositiveEffectPrtExpctScrn", "HelpOthersPrtExpctScrn",
+          "ContributeResearchPrtExpctScrn", "NewMedicationsPrtExpctScrn", "AdditionalAppntsPrtExpctScrn", "RegConHealthProfPrtExpctScrn",
+          "PosExpResearchPrtExpctScrn", "TimeCommitmentPrtExpctScrn", "DistanceToClinicPrtExpctScrn","SideEffectsPrtExpctScrn")
+
+SS1_labels <- c(
+  "TimeCommitmentPrtExpctScrn"   = "Time Commitment Concern",
+  "DistanceToClinicPrtExpctScrn" = "Distance to Clinic Concern",
+  "SideEffectsPrtExpctScrn"      = "Side Effects Concern",
+  "NewMedicationsPrtExpctScrn"   = "Desire to access New Medications that are not Available",
+  "PositiveEffectPrtExpctScrn"   = "Expectation for a Positive Effect on MND",
+  "PosExpResearchPrtExpctScrn"   = "Participated in Research Before and it was Positive",
+  "AdditionalAppntsPrtExpctScrn" = "Additional Appointments to know Progression",
+  "RegConHealthProfPrtExpctScrn" = "More Regular Contact with Health Professionals",
+  "HelpOthersPrtExpctScrn"       = "Desire to Help Others",
+  "ContributeResearchPrtExpctScrn" = "Opportunity to Contribute to Research"
+)
+
+# ---- filter to participants only (those with PrtExpctScrnId) ----
+SS1_clean <- SS1 %>%
+  mutate(
+    PrtExpctScrnId = as.character(PrtExpctScrnId),
+    PrtExpctScrnId = trimws(PrtExpctScrnId),
+    PrtExpctScrnId = if_else(
+      PrtExpctScrnId %in% c("", "#NULL!", "NULL", "NA", "<NA>"),
+      NA_character_,
+      PrtExpctScrnId
+    )
+  )
+
+SS1_participants <- SS1_clean %>%
+  filter(!is.na(PrtExpctScrnId))
+
+# ---- summarise participant-only responses ----
+SS1_PrtScrn_summary <- purrr::map_dfr(SS1_vars, function(varname){
+  x <- SS1_participants[[varname]]
+  tibble::tibble(
+    Question = varname,
+    total = sum(x %in% 1:4),      # only actual responses count
+    missing = sum(is.na(x) | !(x %in% 1:4)),
+    Yes = sum(x == 1, na.rm = TRUE),
+    No = sum(x == 2, na.rm = TRUE),
+    Unsure = sum(x == 3, na.rm = TRUE),
+    Prefer_Not = sum(x == 4, na.rm = TRUE)
+  )
+})
+
+# ---- standardise Response strings and force factor levels ----
+SS1_PrtScrn_long <- SS1_PrtScrn_long %>%
+  mutate(
+    # standardise possible variants to canonical names
+    Response = as.character(Response),
+    Response = dplyr::case_when(
+      Response %in% c("Yes", "yes", "Y", "y", "1") ~ "Yes",
+      Response %in% c("No", "no", "N", "n", "2") ~ "No",
+      Response %in% c("Unsure", "Not sure", "unsure", "maybe", "3") ~ "Unsure",
+      Response %in% c("Prefer_Not", "Prefer Not", "Prefer not to say", "Prefer not", "4") ~ "Prefer_Not",
+      TRUE ~ Response
+    ),
+    # now explicitly set factor levels (this order will be used for the legend)
+    Response = factor(Response, levels = c("Yes", "No", "Unsure", "Prefer_Not"))
+  )
+
+# quick check to confirm levels and unique values
+print(levels(SS1_PrtScrn_long$Response))
+print(sort(unique(as.character(SS1_PrtScrn_long$Response))))
+
+# ---- colour mapping (named) and matching labels in same order ----
+fill_colors <- c(
+  "Yes" = "#2E8B57",       # Green
+  "No" = "#B22222",        # Red
+  "Unsure" = "#FF8C00",    # Yellow/Orange
+  "Prefer_Not" = "grey60"  # Grey
+)
+
+fill_labels <- c("Yes", "No", "Unsure", "Prefer not to say")  # must match factor level order
+
+# ---- Plot (colors and legend will now match correctly) ----
+p <- ggplot(TraMemPlaArms_PrtScrn_long, aes(x = Question, y = perc, fill = Response)) +
+  geom_col() +
+  geom_text(aes(label = ifelse(perc >= 5, paste0(round(perc,1), "%"), "")),
+            position = position_stack(vjust = 0.5), size = 3) +
+  coord_flip() +
+  scale_fill_manual(values = fill_colors, labels = fill_labels, drop = FALSE) +
+  labs(title = "Participant Expectation at Screening",
+       x = NULL, y = "Percent (%)") +
+  theme_minimal() +
+  theme(legend.position = "bottom", axis.text.y = element_text(size = 9))
+
+print(p)
+
+Prt_Scrn_Travel <- TraMemPlaArms %>%
+  mutate(TimeToTravelMnsPrtExpctScrn = na_if(TimeToTravelMnsPrtExpctScrn, "#NULL!"),
+         TimeToTravelMnsPrtExpctScrn = as.numeric(TimeToTravelMnsPrtExpctScrn)) %>%
+  summarise(
+    total = sum(!is.na(TimeToTravelMnsPrtExpctScrn)),
+    missing = sum(is.na(TimeToTravelMnsPrtExpctScrn)),
+    mean = mean(TimeToTravelMnsPrtExpctScrn, na.rm = TRUE),
+    median = median(TimeToTravelMnsPrtExpctScrn, na.rm = TRUE),
+    sd = sd(TimeToTravelMnsPrtExpctScrn, na.rm = TRUE),
+    min = min(TimeToTravelMnsPrtExpctScrn, na.rm = TRUE),
+    max = max(TimeToTravelMnsPrtExpctScrn, na.rm = TRUE),
+    q25 = quantile(TimeToTravelMnsPrtExpctScrn, 0.25, na.rm = TRUE),
+    q75 = quantile(TimeToTravelMnsPrtExpctScrn, 0.75, na.rm = TRUE),
+    IQR = IQR(TimeToTravelMnsPrtExpctScrn, na.rm = TRUE)
+  )
+
+Prt_Scrn_Travel
+
+#---------------------------------------------------------------
+#Caregiver Expectation at Screening
+#---------------------------------------------------------------
+Crr_Scrn_vars <- c("SupportiveCrrExpctScrn","JointDecisionCrrExpctScrn", "InTrialWithPartCrrExpctScrn",  
+                   "RequiresMySupportCrrExpctScrn", "PositiveEffectCrrExpctScrn",  
+                   "BurdenOnMeCrrExpctScrn", "DistanceToClinicCrrExpctScrn", "TimeCommitmentCrrExpctScrn", 
+                  "SideEffectsCrrExpctScrn","PlaceboGroupCrrExpctScrn")
+
+Crr_Scrn_labels <- c(
+  "SupportiveCrrExpctScrn" = "Supportive of Patient's Decision to Participate",
+  "JointDecisionCrrExpctScrn" = "Perceived Joint Decision",
+  "TimeCommitmentCrrExpctScrn" = "Perceived Time Commitment Concern",
+  "DistanceToClinicCrrExpctScrn" = "Perceived Travel Distance Concern",
+  "SideEffectsCrrExpctScrn" = "Perceived Side Effects Concern",
+  "RequiresMySupportCrrExpctScrn" = "Support Required for Patient to Participate",
+  "InTrialWithPartCrrExpctScrn" = "Perceived Participation with Participant",
+  "BurdenOnMeCrrExpctScrn" = "Perceived Participation Burden as Caregiver",
+  "PositiveEffectCrrExpctScrn" = "Expectation that Study Drug will have Positive Effect",
+  "PlaceboGroupCrrExpctScrn" = "Perceived Placebo Group Concern"
+)
+
+# ---- filter to participants only (those with CrrExpctScrnId) ----
+TraMemPlaArms_Crr_clean <- TraMemPlaArms %>%
+  mutate(
+    CrrExpctScrnId = as.character(CrrExpctScrnId),
+    CrrExpctScrnId = trimws(CrrExpctScrnId),
+    CrrExpctScrnId = if_else(
+      CrrExpctScrnId %in% c("", "#NULL!", "NULL", "NA", "<NA>"),
+      NA_character_,
+      CrrExpctScrnId
+    )
+  )
+
+TraMemPlaArms_carers <- TraMemPlaArms_Crr_clean %>%
+  filter(!is.na(CrrExpctScrnId))
+
+# ---- summarise caregiver-only responses ----
+Crr_screening_summary <- purrr::map_dfr(Crr_Scrn_vars, function(varname){
+  x <- TraMemPlaArms_carers[[varname]]
+  tibble::tibble(
+    Question = varname,
+    total = sum(x %in% 1:4),      # only actual responses count
+    missing = sum(is.na(x) | !(x %in% 1:4)),
+    Yes = sum(x == 1, na.rm = TRUE),
+    No = sum(x == 2, na.rm = TRUE),
+    Unsure = sum(x == 3, na.rm = TRUE),
+    Prefer_Not = sum(x == 4, na.rm = TRUE)
+  )
+})
+
+# ---- reshape to long and standardise Response ----
+Crr_screening_long <- Crr_screening_summary %>%
+  pivot_longer(cols = c(Yes, No, Unsure, Prefer_Not),
+               names_to = "Response",
+               values_to = "Count") %>%
+  mutate(
+    perc = ifelse(total > 0, 100 * Count / total, NA_real_),
+    Response = dplyr::case_when(
+      Response %in% c("Yes", "yes", "Y", "y", "1") ~ "Yes",
+      Response %in% c("No", "no", "N", "n", "2") ~ "No",
+      Response %in% c("Unsure", "Not sure", "unsure", "maybe", "3") ~ "Unsure",
+      Response %in% c("Prefer_Not", "Prefer Not", "Prefer not to say", "Prefer not", "4") ~ "Prefer_Not",
+      TRUE ~ Response
+    ),
+    Response = factor(Response, levels = c("Yes", "No", "Unsure", "Prefer_Not")),
+    Question = recode(Question, !!!Crr_Scrn_labels),
+    Question = factor(Question, levels = rev(unname(Crr_Scrn_labels[Crr_Scrn_vars])))
+  )
+
+# ---- check levels ----
+print(levels(Crr_screening_long$Response))
+print(sort(unique(as.character(Crr_screening_long$Response))))
+
+# ---- plot ----
+fill_colors <- c(
+  "Yes" = "#2E8B57",       # Green
+  "No" = "#B22222",        # Red
+  "Unsure" = "#FF8C00",    # Yellow/Orange
+  "Prefer_Not" = "grey60"  # Grey
+)
+
+fill_labels <- c("Yes", "No", "Unsure", "Prefer not to say")
+
+Crr_screening_plot <- ggplot(Crr_screening_long, aes(x = Question, y = perc, fill = Response)) +
+  geom_col() +
+  geom_text(aes(label = ifelse(perc >= 5, paste0(round(perc,1), "%"), "")),
+            position = position_stack(vjust = 0.5), size = 3) +
+  coord_flip() +
+  scale_fill_manual(values = fill_colors, labels = fill_labels, drop = FALSE) +
+  labs(title = "Caregiver Expectation at Screening",
+       x = NULL, y = "Percent (%)") +
+  theme_minimal() +
+  theme(legend.position = "bottom", axis.text.y = element_text(size = 9))
+
+print(Crr_screening_plot)
+
+#-------------------------------------------------------------------
+#Participant Feedback at 2 months
+#------------------------------------------------------------------
+# Your original variable list (kept as keys for labels & ordering)
+Prt_M2_vars <- c("ExpSideEffectsPrtFeedback2m", "AwareExpSideEffectsPrtFeedback2m", "ConsiderStopDrugPrtFeedback2m",
+                 "TimeCommitmentPrtFeedback2m", "KnowDrugAllocatedPrtFeedback2m", "AffectDecisionRPrtFeedback2m", 
+                 "DrugEffectExpectedPrtFeedback2m", "ParticAsExpectedPrtFeedback2m", "EnjoyedParticPrtFeedback2m",
+                 "KeepParticPrtFeedback2m", "OverallExperiencePrtFeedback2m", "InfoLeafletPrtFeedback2m", "LevelOfContactPrtFeedback2m",
+                 "DrugDeliverHomePrtFeedback2m", "EaseOfTakingDrugPrtFeedback2m", "DrugLiquidFormPrtFeedback2m", "LengthAppntsPrtFeedback2m",
+                 "RemoteAppntsPrtFeedback2m", "AssessmentsTestsPrtFeedback2m")
+
+Prt_M2_labels <- c(
+  "ExpSideEffectsPrtFeedback2m"   = "Experienced Side Effects",
+  "AwareExpSideEffectsPrtFeedback2m" = "Aware of Potentially Experiencing Side Effects",
+  "ConsiderStopDrugPrtFeedback2m" = "Considered Stopping or Withdrawing from Side Effects",
+  "TimeCommitmentPrtFeedback2m" = "Negative Impact from Time Commitment",
+  "KnowDrugAllocatedPrtFeedback2m"   = "Perceived Knowledge of Allocated Drug",
+  "AffectDecisionRPrtFeedback2m"   = "Impact of Allocated Drug on Participation",
+  "DrugEffectExpectedPrtFeedback2m" = "Impact of Drug Expectation Met",
+  "ParticAsExpectedPrtFeedback2m" = "Perceived Participation Expectation Met",
+  "EnjoyedParticPrtFeedback2m"       = "Enjoyed Participation",
+  "KeepParticPrtFeedback2m" = "To Continue Participation",
+  "OverallExperiencePrtFeedback2m" = "Overall Trial Experience",
+  "InfoLeafletPrtFeedback2m" = "Sufficient Information on PIS and Website",
+  "LevelOfContactPrtFeedback2m" = "Sufficient Contact with Trial Team",
+  "DrugDeliverHomePrtFeedback2m" = "Study Drug Delivered",
+  "EaseOfTakingDrugPrtFeedback2m" = "Ease of Taking Trial Drug",
+  "DrugLiquidFormPrtFeedback2m" = "Liquid Form",
+  "LengthAppntsPrtFeedback2m" = "Length of Research Appointments",
+  "RemoteAppntsPrtFeedback2m" = "Use of Remote Appointments",
+  "AssessmentsTestsPrtFeedback2m" = "Assessments and Tests"
+)
+
+# ---- filter to participants only (those with PrtFeedbackIdPrtFeedback2m) ----
+TraMemPlaArms_Prt_M2_clean <- TraMemPlaArms %>%
+  mutate(
+    PrtFeedbackIdPrtFeedback2m = as.character(PrtFeedbackIdPrtFeedback2m),
+    PrtFeedbackIdPrtFeedback2m = trimws(PrtFeedbackIdPrtFeedback2m),
+    PrtFeedbackIdPrtFeedback2m = if_else(
+      PrtFeedbackIdPrtFeedback2m %in% c("", "#NULL!", "NULL", "NA", "<NA>"),
+      NA_character_,
+      PrtFeedbackIdPrtFeedback2m
+    )
+  )
+
+TraMemPlaArms_Prt_M2 <- TraMemPlaArms_Prt_M2_clean %>%
+  filter(!is.na(PrtFeedbackIdPrtFeedback2m))
+
+# ---- summarise caregiver-only responses ----
+Prt_M2_summary <- purrr::map_dfr(Prt_M2_vars, function(varname){
+  x <- TraMemPlaArms_Prt_M2[[varname]]
+  tibble::tibble(
+    Question = varname,
+    total = sum(x %in% 1:4),      # only actual responses count
+    missing = sum(is.na(x) | !(x %in% 1:4)),
+    Yes = sum(x == 1, na.rm = TRUE),
+    No = sum(x == 2, na.rm = TRUE),
+    Unsure = sum(x == 3, na.rm = TRUE),
+    Prefer_Not = sum(x == 4, na.rm = TRUE)
+  )
+})
+
+# ---- reshape to long and standardise Response ----
+Prt_M2_long <- Prt_M2_summary %>%
+  pivot_longer(cols = c(Yes, No, Unsure, Prefer_Not),
+               names_to = "Response",
+               values_to = "Count") %>%
+  mutate(
+    perc = ifelse(total > 0, 100 * Count / total, NA_real_),
+    Response = dplyr::case_when(
+      Response %in% c("Yes", "yes", "Y", "y", "1") ~ "Yes",
+      Response %in% c("No", "no", "N", "n", "2") ~ "No",
+      Response %in% c("Unsure", "Not sure", "unsure", "maybe", "3") ~ "Unsure",
+      Response %in% c("Prefer_Not", "Prefer Not", "Prefer not to say", "Prefer not", "4") ~ "Prefer_Not",
+      TRUE ~ Response
+    ),
+    Response = factor(Response, levels = c("Yes", "No", "Unsure", "Prefer_Not")),
+    Question = recode(Question, !!!Prt_M2_labels),
+    Question = factor(Question, levels = rev(unname(Prt_M2_labels[Prt_M2_vars])))
+  )
+
+# ---- check levels ----
+print(levels(Prt_M2_long$Response))
+print(sort(unique(as.character(Prt_M2_long$Response))))
+
+# ---- plot ----
+fill_colors <- c(
+  "Yes" = "#2E8B57",       # Green
+  "No" = "#B22222",        # Red
+  "Unsure" = "#FF8C00",    # Yellow/Orange
+  "Prefer_Not" = "grey60"  # Grey
+)
+
+fill_labels <- c("Yes", "No", "Unsure", "Prefer not to say")
+
+Prt_M2_plot <- ggplot(Prt_M2_long, aes(x = Question, y = perc, fill = Response)) +
+  geom_col() +
+  geom_text(aes(label = ifelse(perc >= 5, paste0(round(perc,1), "%"), "")),
+            position = position_stack(vjust = 0.5), size = 3) +
+  coord_flip() +
+  scale_fill_manual(values = fill_colors, labels = fill_labels, drop = FALSE) +
+  labs(title = "Participant Feedback at Month 2",
+       x = NULL, y = "Percent (%)") +
+  theme_minimal() +
+  theme(legend.position = "bottom", axis.text.y = element_text(size = 9))
+
+print(Prt_M2_plot)
+
+M2_Travel_clean <- TraMemPlaArms %>%
+  mutate(
+    TimeToTravelMnsPrtFeedback2m = as.character(TimeToTravelMnsPrtFeedback2m),
+    TimeToTravelMnsPrtFeedback2m = trimws(TimeToTravelMnsPrtFeedback2m),
+    TimeToTravelMnsPrtFeedback2m = if_else(
+      TimeToTravelMnsPrtFeedback2m %in% c("", "#NULL!", "NULL", "NA", "<NA>"),
+      NA_character_,
+      TimeToTravelMnsPrtFeedback2m
+    ),
+    TimeToTravelMnsPrtFeedback2m = as.numeric(TimeToTravelMnsPrtFeedback2m)  # convert back to numeric
+  )
+
+M2_Travel_summary <- M2_Travel_clean %>%
+  summarise(
+    total = sum(!is.na(TimeToTravelMnsPrtFeedback2m)),
+    missing = sum(is.na(TimeToTravelMnsPrtFeedback2m)),
+    mean = mean(TimeToTravelMnsPrtFeedback2m, na.rm = TRUE),
+    median = median(TimeToTravelMnsPrtFeedback2m, na.rm = TRUE),
+    sd = sd(TimeToTravelMnsPrtFeedback2m, na.rm = TRUE),
+    min = min(TimeToTravelMnsPrtFeedback2m, na.rm = TRUE),
+    max = max(TimeToTravelMnsPrtFeedback2m, na.rm = TRUE),
+    q25 = quantile(TimeToTravelMnsPrtFeedback2m, 0.25, na.rm = TRUE),
+    q75 = quantile(TimeToTravelMnsPrtFeedback2m, 0.75, na.rm = TRUE)
+  )
+M2_Travel_summary
+
+#--------------------------------------------------------------------------
+#Participant Feedback at Month 6
+#--------------------------------------------------------------------------
+# Your original variable list (kept as keys for labels & ordering)
+Prt_M6_vars <- c("ExpSideEffectsPrtFeedback6m", "AwareExpSideEffectsPrtFeedback6m", "ConsiderStopDrugPrtFeedback6m",
+                 "TimeCommitmentPrtFeedback6m", "KnowDrugAllocatedPrtFeedback6m", "AffectDecisionRPrtFeedback6m", 
+                 "DrugEffectExpectedPrtFeedback6m", "ParticAsExpectedPrtFeedback6m", "EnjoyedParticPrtFeedback6m",
+                 "KeepParticPrtFeedback6m", "OverallExperiencePrtFeedback6m", "InfoLeafletPrtFeedback6m", "LevelOfContactPrtFeedback6m",
+                 "DrugDeliverHomePrtFeedback6m", "EaseOfTakingDrugPrtFeedback6m", "DrugLiquidFormPrtFeedback6m", "LengthAppntsPrtFeedback6m",
+                 "RemoteAppntsPrtFeedback6m", "AssessmentsTestsPrtFeedback6m")
+
+Prt_M6_labels <- c(
+  "ExpSideEffectsPrtFeedback6m"   = "Experienced Side Effects",
+  "AwareExpSideEffectsPrtFeedback6m" = "Aware of Potentially Experiencing Side Effects",
+  "ConsiderStopDrugPrtFeedback6m" = "Considered Stopping or Withdrawing from Side Effects",
+  "TimeCommitmentPrtFeedback6m" = "Negative Impact from Time Commitment",
+  "KnowDrugAllocatedPrtFeedback6m"   = "Perceived Knowledge of Allocated Drug",
+  "AffectDecisionRPrtFeedback6m"   = "Impact of Allocated Drug on Participation",
+  "DrugEffectExpectedPrtFeedback6m" = "Impact of Drug Expectation Met",
+  "ParticAsExpectedPrtFeedback6m" = "Perceived Participation Expectation Met",
+  "EnjoyedParticPrtFeedback6m"       = "Enjoyed Participation",
+  "KeepParticPrtFeedback6m" = "To Continue Participation",
+  "OverallExperiencePrtFeedback6m" = "Overall Trial Experience",
+  "InfoLeafletPrtFeedback6m" = "Sufficient Information on PIS and Website",
+  "LevelOfContactPrtFeedback6m" = "Sufficient Contact with Trial Team",
+  "DrugDeliverHomePrtFeedback6m" = "Study Drug Delivered",
+  "EaseOfTakingDrugPrtFeedback6m" = "Ease of Taking Trial Drug",
+  "DrugLiquidFormPrtFeedback6m" = "Liquid Form",
+  "LengthAppntsPrtFeedback6m" = "Length of Research Appointments",
+  "RemoteAppntsPrtFeedback6m" = "Use of Remote Appointments",
+  "AssessmentsTestsPrtFeedback6m" = "Assessments and Tests"
+)
+
+# ---- filter to participants only (those with PrtFeedbackIdPrtFeedback6m) ----
+TraMemPlaArms_Prt_M6_clean <- TraMemPlaArms %>%
+  mutate(
+    PrtFeedbackIdPrtFeedback6m = as.character(PrtFeedbackIdPrtFeedback6m),
+    PrtFeedbackIdPrtFeedback6m = trimws(PrtFeedbackIdPrtFeedback6m),
+    PrtFeedbackIdPrtFeedback6m = if_else(
+      PrtFeedbackIdPrtFeedback6m %in% c("", "#NULL!", "NULL", "NA", "<NA>"),
+      NA_character_,
+      PrtFeedbackIdPrtFeedback6m
+    )
+  )
+
+TraMemPlaArms_Prt_M6 <- TraMemPlaArms_Prt_M6_clean %>%
+  filter(!is.na(PrtFeedbackIdPrtFeedback6m))
+
+# ---- summarise caregiver-only responses ----
+Prt_M6_summary <- purrr::map_dfr(Prt_M6_vars, function(varname){
+  x <- TraMemPlaArms_Prt_M6[[varname]]
+  tibble::tibble(
+    Question = varname,
+    total = sum(x %in% 1:4),      # only actual responses count
+    missing = sum(is.na(x) | !(x %in% 1:4)),
+    Yes = sum(x == 1, na.rm = TRUE),
+    No = sum(x == 2, na.rm = TRUE),
+    Unsure = sum(x == 3, na.rm = TRUE),
+    Prefer_Not = sum(x == 4, na.rm = TRUE)
+  )
+})
+
+# ---- reshape to long and standardise Response ----
+Prt_M6_long <- Prt_M6_summary %>%
+  pivot_longer(cols = c(Yes, No, Unsure, Prefer_Not),
+               names_to = "Response",
+               values_to = "Count") %>%
+  mutate(
+    perc = ifelse(total > 0, 100 * Count / total, NA_real_),
+    Response = dplyr::case_when(
+      Response %in% c("Yes", "yes", "Y", "y", "1") ~ "Yes",
+      Response %in% c("No", "no", "N", "n", "2") ~ "No",
+      Response %in% c("Unsure", "Not sure", "unsure", "maybe", "3") ~ "Unsure",
+      Response %in% c("Prefer_Not", "Prefer Not", "Prefer not to say", "Prefer not", "4") ~ "Prefer_Not",
+      TRUE ~ Response
+    ),
+    Response = factor(Response, levels = c("Yes", "No", "Unsure", "Prefer_Not")),
+    Question = recode(Question, !!!Prt_M6_labels),
+    Question = factor(Question, levels = rev(unname(Prt_M6_labels[Prt_M6_vars])))
+  )
+
+# ---- check levels ----
+print(levels(Prt_M6_long$Response))
+print(sort(unique(as.character(Prt_M6_long$Response))))
+
+# ---- plot ----
+fill_colors <- c(
+  "Yes" = "#2E8B57",       # Green
+  "No" = "#B22222",        # Red
+  "Unsure" = "#FF8C00",    # Yellow/Orange
+  "Prefer_Not" = "grey60"  # Grey
+)
+
+fill_labels <- c("Yes", "No", "Unsure", "Prefer not to say")
+
+Prt_M6_plot <- ggplot(Prt_M6_long, aes(x = Question, y = perc, fill = Response)) +
+  geom_col() +
+  geom_text(aes(label = ifelse(perc >= 5, paste0(round(perc,1), "%"), "")),
+            position = position_stack(vjust = 0.5), size = 3) +
+  coord_flip() +
+  scale_fill_manual(values = fill_colors, labels = fill_labels, drop = FALSE) +
+  labs(title = "Participant Feedback at Month 6",
+       x = NULL, y = "Percent (%)") +
+  theme_minimal() +
+  theme(legend.position = "bottom", axis.text.y = element_text(size = 9))
+
+print(Prt_M6_plot)
+
+M6_Travel_summary <- TraMemPlaArms %>%
+  summarise(
+    total = sum(!is.na(TimeToTravelMns)),
+    missing = sum(is.na(TimeToTravelMns)),
+    mean = mean(TimeToTravelMns, na.rm = TRUE),
+    median = median(TimeToTravelMns, na.rm = TRUE),
+    sd = sd(TimeToTravelMns, na.rm = TRUE),
+    min = min(TimeToTravelMns, na.rm = TRUE),
+    max = max(TimeToTravelMns, na.rm = TRUE),
+    q25 = quantile(TimeToTravelMns, 0.25, na.rm = TRUE),
+    q75 = quantile(TimeToTravelMns, 0.75, na.rm = TRUE)
+  )
+M6_Travel_summary
+
+#---------------------------------------------------------------
+#Carer Feedback at Month 2
+#---------------------------------------------------------------
+Crr_M2_vars <- c("IncreasedBurdenCrrFeedback2m", "NegOtherActivitiesCrrFeedback2m", "DrugEffectExpectedCrrFeedback2m",
+                 "EnjoyedInvolvementCrrFeedback2m", 
+                 "ParticAsExpectedCrrFeedback2m", "SupportiveCrrFeedback2m",
+                 "SupportAppointmentsCrrFeedback2m", "SupportMedicationCrrFeedback2m", 
+                 "OverallExperienceCrrFeedback2m", "InfoLeafletCrrFeedback2m", "LevelOfContactCrrFeedback2m", 
+                 "DrugDeliverHomeCrrFeedback2m", "EaseOfTakingDrugCrrFeedback2m", "DrugLiquidFormCrrFeedback2m", 
+                 "LengthAppntsCrrFeedback2m", "RemoteAppntsCrrFeedback2m", "AssessmentsTestsCrrFeedback2m"
+)
+
+Crr_M2_labels <- c(
+  "ParticAsExpectedCrrFeedback2m" = "Participation Matched Expectation",
+  "EnjoyedInvolvementCrrFeedback2m" = "Enjoyed Involvement in Trial",
+  "SupportiveCrrFeedback2m" = "Supportive of Participant to Remain in Trial", 
+  "DrugEffectExpectedCrrFeedback2m" = "Impact of Drug Expectation Met",
+  "IncreasedBurdenCrrFeedback2m" = "Participation increased burden as Caregiver",
+  "SupportAppointmentsCrrFeedback2m" = "Ability to support scheduling and attending appointments",
+  "SupportMedicationCrrFeedback2m" = "Ability to support taking the Drug",
+  "NegOtherActivitiesCrrFeedback2m" = "Negative Impact from Time Commitment",
+  "OverallExperienceCrrFeedback2m" = "Overall Trial Experience",
+  "InfoLeafletCrrFeedback2m" = "Sufficient Information on PIS and Website",
+  "LevelOfContactCrrFeedback2m" = "Sufficient Contact with Trial Team",
+  "DrugDeliverHomeCrrFeedback2m" = "Study Drug Delivered",
+  "EaseOfTakingDrugCrrFeedback2m" = "Ease of Taking Trial Drug",
+  "DrugLiquidFormCrrFeedback2m" = "Liquid Form",
+  "LengthAppntsCrrFeedback2m" = "Length of Research Appointments",
+  "RemoteAppntsCrrFeedback2m" = "Use of Remote Appointments",
+  "AssessmentsTestsCrrFeedback2m" = "Assessments and Tests"
+)
+
+# ---- filter to caregivers only (those with CrrFeedbackIdCrrFeedback2m) ----
+TraMemPlaArms_Crr_M2_clean <- TraMemPlaArms %>%
+  mutate(
+    CrrFeedbackIdCrrFeedback2m = as.character(CrrFeedbackIdCrrFeedback2m),
+    CrrFeedbackIdCrrFeedback2m = trimws(CrrFeedbackIdCrrFeedback2m),
+    CrrFeedbackIdCrrFeedback2m = if_else(
+      CrrFeedbackIdCrrFeedback2m %in% c("", "#NULL!", "NULL", "NA", "<NA>"),
+      NA_character_,
+      CrrFeedbackIdCrrFeedback2m
+    )
+  )
+
+TraMemPlaArms_Crr_M2 <- TraMemPlaArms_Crr_M2_clean %>%
+  filter(!is.na(CrrFeedbackIdCrrFeedback2m))
+
+# ---- summarise caregiver-only responses ----
+Crr_M2_summary <- purrr::map_dfr(Crr_M2_vars, function(varname){
+  x <- TraMemPlaArms_Crr_M2[[varname]]
+  tibble::tibble(
+    Question = varname,
+    total = sum(x %in% 1:4),      # only actual responses count
+    missing = sum(is.na(x) | !(x %in% 1:4)),
+    Yes = sum(x == 1, na.rm = TRUE),
+    No = sum(x == 2, na.rm = TRUE),
+    Unsure = sum(x == 3, na.rm = TRUE),
+    Prefer_Not = sum(x == 4, na.rm = TRUE)
+  )
+})
+
+# ---- reshape to long and standardise Response ----
+Crr_M2_long <- Crr_M2_summary %>%
+  pivot_longer(cols = c(Yes, No, Unsure, Prefer_Not),
+               names_to = "Response",
+               values_to = "Count") %>%
+  mutate(
+    perc = ifelse(total > 0, 100 * Count / total, NA_real_),
+    Response = dplyr::case_when(
+      Response %in% c("Yes", "yes", "Y", "y", "1") ~ "Yes",
+      Response %in% c("No", "no", "N", "n", "2") ~ "No",
+      Response %in% c("Unsure", "Not sure", "unsure", "maybe", "3") ~ "Unsure",
+      Response %in% c("Prefer_Not", "Prefer Not", "Prefer not to say", "Prefer not", "4") ~ "Prefer_Not",
+      TRUE ~ Response
+    ),
+    Response = factor(Response, levels = c("Yes", "No", "Unsure", "Prefer_Not")),
+    Question = recode(Question, !!!Crr_M2_labels),
+    Question = factor(Question, levels = rev(unname(Crr_M2_labels[Crr_M2_vars])))
+  )
+
+# ---- check levels ----
+print(levels(Crr_M2_long$Response))
+print(sort(unique(as.character(Crr_M2_long$Response))))
+
+# ---- plot ----
+fill_colors <- c(
+  "Yes" = "#2E8B57",       # Green
+  "No" = "#B22222",        # Red
+  "Unsure" = "#FF8C00",    # Yellow/Orange
+  "Prefer_Not" = "grey60"  # Grey
+)
+
+fill_labels <- c("Yes", "No", "Unsure", "Prefer not to say")
+
+Crr_M2_plot <- ggplot(Crr_M2_long, aes(x = Question, y = perc, fill = Response)) +
+  geom_col() +
+  geom_text(aes(label = ifelse(perc >= 5, paste0(round(perc,1), "%"), "")),
+            position = position_stack(vjust = 0.5), size = 3) +
+  coord_flip() +
+  scale_fill_manual(values = fill_colors, labels = fill_labels, drop = FALSE) +
+  labs(title = "Caregiver Feedback at Month 2",
+       x = NULL, y = "Percent (%)") +
+  theme_minimal() +
+  theme(legend.position = "bottom", axis.text.y = element_text(size = 9))
+
+print(Crr_M2_plot)
+
+#----------------------------------------------------------
+#Carer Feedback at Month 6
+#----------------------------------------------------------
+Crr_M6_vars <- c("IncreasedBurdenCrrFeedback6m", "NegOtherActivitiesCrrFeedback6m", "DrugEffectExpectedCrrFeedback6m",
+                 "EnjoyedInvolvementCrrFeedback6m", 
+                 "ParticAsExpectedCrrFeedback6m", "SupportiveCrrFeedback6m",
+                 "SupportAppointmentsCrrFeedback6m", "SupportMedicationCrrFeedback6m", 
+                 "OverallExperienceCrrFeedback6m", "InfoLeafletCrrFeedback6m", "LevelOfContactCrrFeedback6m", 
+                 "DrugDeliverHomeCrrFeedback6m", "EaseOfTakingDrugCrrFeedback6m", "DrugLiquidFormCrrFeedback6m", 
+                 "LengthAppntsCrrFeedback6m", "RemoteAppntsCrrFeedback6m", "AssessmentsTestsCrrFeedback6m"
+)
+
+Crr_M6_labels <- c(
+  "ParticAsExpectedCrrFeedback6m" = "Participation Matched Expectation",
+  "EnjoyedInvolvementCrrFeedback6m" = "Enjoyed Involvement in Trial",
+  "SupportiveCrrFeedback6m" = "Supportive of Participant to Remain in Trial", 
+  "DrugEffectExpectedCrrFeedback6m" = "Impact of Drug Expectation Met",
+  "IncreasedBurdenCrrFeedback6m" = "Participation increased burden as Caregiver",
+  "SupportAppointmentsCrrFeedback6m" = "Ability to support scheduling and attending appointments",
+  "SupportMedicationCrrFeedback6m" = "Ability to support taking the Drug",
+  "NegOtherActivitiesCrrFeedback6m" = "Negative Impact from Time Commitment",
+  "OverallExperienceCrrFeedback6m" = "Overall Trial Experience",
+  "InfoLeafletCrrFeedback6m" = "Sufficient Information on PIS and Website",
+  "LevelOfContactCrrFeedback6m" = "Sufficient Contact with Trial Team",
+  "DrugDeliverHomeCrrFeedback6m" = "Study Drug Delivered",
+  "EaseOfTakingDrugCrrFeedback6m" = "Ease of Taking Trial Drug",
+  "DrugLiquidFormCrrFeedback6m" = "Liquid Form",
+  "LengthAppntsCrrFeedback6m" = "Length of Research Appointments",
+  "RemoteAppntsCrrFeedback6m" = "Use of Remote Appointments",
+  "AssessmentsTestsCrrFeedback6m" = "Assessments and Tests"
+)
+
+# ---- filter to caregivers only (those with CrrFeedbackIdCrrFeedback2m) ----
+TraMemPlaArms_Crr_M6_clean <- TraMemPlaArms %>%
+  mutate(
+    CrrFeedbackIdCrrFeedback6m = as.character(CrrFeedbackIdCrrFeedback6m),
+    CrrFeedbackIdCrrFeedback6m = trimws(CrrFeedbackIdCrrFeedback6m),
+    CrrFeedbackIdCrrFeedback6m = if_else(
+      CrrFeedbackIdCrrFeedback6m %in% c("", "#NULL!", "NULL", "NA", "<NA>"),
+      NA_character_,
+      CrrFeedbackIdCrrFeedback6m
+    )
+  )
+
+TraMemPlaArms_Crr_M6 <- TraMemPlaArms_Crr_M6_clean %>%
+  filter(!is.na(CrrFeedbackIdCrrFeedback6m))
+
+# ---- summarise caregiver-only responses ----
+Crr_M6_summary <- purrr::map_dfr(Crr_M6_vars, function(varname){
+  x <- TraMemPlaArms_Crr_M6[[varname]]
+  tibble::tibble(
+    Question = varname,
+    total = sum(x %in% 1:4),      # only actual responses count
+    missing = sum(is.na(x) | !(x %in% 1:4)),
+    Yes = sum(x == 1, na.rm = TRUE),
+    No = sum(x == 2, na.rm = TRUE),
+    Unsure = sum(x == 3, na.rm = TRUE),
+    Prefer_Not = sum(x == 4, na.rm = TRUE)
+  )
+})
+
+# ---- reshape to long and standardise Response ----
+Crr_M6_long <- Crr_M6_summary %>%
+  pivot_longer(cols = c(Yes, No, Unsure, Prefer_Not),
+               names_to = "Response",
+               values_to = "Count") %>%
+  mutate(
+    perc = ifelse(total > 0, 100 * Count / total, NA_real_),
+    Response = dplyr::case_when(
+      Response %in% c("Yes", "yes", "Y", "y", "1") ~ "Yes",
+      Response %in% c("No", "no", "N", "n", "2") ~ "No",
+      Response %in% c("Unsure", "Not sure", "unsure", "maybe", "3") ~ "Unsure",
+      Response %in% c("Prefer_Not", "Prefer Not", "Prefer not to say", "Prefer not", "4") ~ "Prefer_Not",
+      TRUE ~ Response
+    ),
+    Response = factor(Response, levels = c("Yes", "No", "Unsure", "Prefer_Not")),
+    Question = recode(Question, !!!Crr_M6_labels),
+    Question = factor(Question, levels = rev(unname(Crr_M6_labels[Crr_M6_vars])))
+  )
+
+# ---- check levels ----
+print(levels(Crr_M6_long$Response))
+print(sort(unique(as.character(Crr_M6_long$Response))))
+
+# ---- plot ----
+fill_colors <- c(
+  "Yes" = "#2E8B57",       # Green
+  "No" = "#B22222",        # Red
+  "Unsure" = "#FF8C00",    # Yellow/Orange
+  "Prefer_Not" = "grey60"  # Grey
+)
+
+fill_labels <- c("Yes", "No", "Unsure", "Prefer not to say")
+
+Crr_M6_plot <- ggplot(Crr_M6_long, aes(x = Question, y = perc, fill = Response)) +
+  geom_col() +
+  geom_text(aes(label = ifelse(perc >= 5, paste0(round(perc,1), "%"), "")),
+            position = position_stack(vjust = 0.5), size = 3) +
+  coord_flip() +
+  scale_fill_manual(values = fill_colors, labels = fill_labels, drop = FALSE) +
+  labs(title = "Caregiver Feedback at Month 6",
+       x = NULL, y = "Percent (%)") +
+  theme_minimal() +
+  theme(legend.position = "bottom", axis.text.y = element_text(size = 9))
+
+print(Crr_M6_plot)
+
+
+#---------------------------------------------------------
+#Participant Stopping IMP
+#--------------------------------------------------------
+Prt_Stop_IMP_vars <- c("MyDecisionPrtRSIMP", "ChangeNotAsExpectedPrtRSIMP", "StudyDrugAllocatedPrtRSIMP",
+                 "EaseOfTakingDrugPrtRSIMP", "SideEffectsPrtRSIMP", "ImpactOtherConditionsPrtRSIMP",
+                 "ImpactOtherMedicationsPrtRSIMP", "OtherIssuesPrtRSIMP", 
+                 "NaturalCoursePrtRSIMP", "NotWellEnoughPrtRSIMP"
+)
+
+Prt_Stop_IMP_labels <- c(
+  "MyDecisionPrtRSIMP" = "Participant decision to Stop IMP but remain in MND-SMART",
+  "ChangeNotAsExpectedPrtRSIMP" = "Level of change in MND symptoms expectation not met",
+  "StudyDrugAllocatedPrtRSIMP" = "Perceived knowledge of allocated study drug", 
+  "EaseOfTakingDrugPrtRSIMP" = "Ease of taking study drug",
+  "SideEffectsPrtRSIMP" = "Side effects of study drug",
+  "ImpactOtherConditionsPrtRSIMP" = "Impact of the study drug on other conditions they had",
+  "ImpactOtherMedicationsPrtRSIMP" = "Impact of study drug on other medications they took",
+  "OtherIssuesPrtRSIMP" = "Other issues in life to focus on",
+  "NaturalCoursePrtRSIMP" = "Wish to let MND run its natural course",
+  "NotWellEnoughPrtRSIMP" = "MND has progressed and no longer feel well to participate"
+)
+
+# ---- filter to caregivers only (those with PrtReasonStopIMP) ----
+TraMemPlaArms_Prt_Stop_IMP_clean <- TraMemPlaArms %>%
+  mutate(
+    PrtReasonStopIMPId = as.character(PrtReasonStopIMPId),
+    PrtReasonStopIMPId = trimws(PrtReasonStopIMPId),
+    PrtReasonStopIMPId = if_else(
+      PrtReasonStopIMPId %in% c("", "#NULL!", "NULL", "NA", "<NA>"),
+      NA_character_,
+      PrtReasonStopIMPId
+    )
+  )
+
+TraMemPlaArms_Prt_Stop_IMP <- TraMemPlaArms_Prt_Stop_IMP_clean %>%
+  filter(!is.na(PrtReasonStopIMPId))
+
+# ---- summarise participant-only responses ----
+Prt_Stop_IMP_summary <- purrr::map_dfr(Prt_Stop_IMP_vars, function(varname){
+  x <- TraMemPlaArms_Prt_Stop_IMP[[varname]]
+  tibble::tibble(
+    Question = varname,
+    total = sum(x %in% 1:4),      # only actual responses count
+    missing = sum(is.na(x) | !(x %in% 1:4)),
+    Yes = sum(x == 1, na.rm = TRUE),
+    No = sum(x == 2, na.rm = TRUE),
+    Unsure = sum(x == 3, na.rm = TRUE),
+    Prefer_Not = sum(x == 4, na.rm = TRUE)
+  )
+})
+
+# ---- reshape to long and standardise Response ----
+Prt_Stop_IMP_long <- Prt_Stop_IMP_summary %>%
+  pivot_longer(cols = c(Yes, No, Unsure, Prefer_Not),
+               names_to = "Response",
+               values_to = "Count") %>%
+  mutate(
+    perc = ifelse(total > 0, 100 * Count / total, NA_real_),
+    Response = dplyr::case_when(
+      Response %in% c("Yes", "yes", "Y", "y", "1") ~ "Yes",
+      Response %in% c("No", "no", "N", "n", "2") ~ "No",
+      Response %in% c("Unsure", "Not sure", "unsure", "maybe", "3") ~ "Unsure",
+      Response %in% c("Prefer_Not", "Prefer Not", "Prefer not to say", "Prefer not", "4") ~ "Prefer_Not",
+      TRUE ~ Response
+    ),
+    Response = factor(Response, levels = c("Yes", "No", "Unsure", "Prefer_Not")),
+    Question = recode(Question, !!!Prt_Stop_IMP_labels),
+    Question = factor(Question, levels = rev(unname(Prt_Stop_IMP_labels[Prt_Stop_IMP_vars])))
+  )
+
+# ---- check levels ----
+print(levels(Prt_Stop_IMP_long$Response))
+print(sort(unique(as.character(Prt_Stop_IMP_long$Response))))
+
+# ---- plot ----
+fill_colors <- c(
+  "Yes" = "#2E8B57",       # Green
+  "No" = "#B22222",        # Red
+  "Unsure" = "#FF8C00",    # Yellow/Orange
+  "Prefer_Not" = "grey60"  # Grey
+)
+
+fill_labels <- c("Yes", "No", "Unsure", "Prefer not to say")
+
+Prt_Stop_IMP_plot <- ggplot(Prt_Stop_IMP_long, aes(x = Question, y = perc, fill = Response)) +
+  geom_col() +
+  geom_text(aes(label = ifelse(perc >= 5, paste0(round(perc,1), "%"), "")),
+            position = position_stack(vjust = 0.5), size = 3) +
+  coord_flip() +
+  scale_fill_manual(values = fill_colors, labels = fill_labels, drop = FALSE) +
+  labs(title = "Important Reasons for Participant for Stopping IMP",
+       x = NULL, y = "Percent (%)") +
+  theme_minimal() +
+  theme(legend.position = "bottom", axis.text.y = element_text(size = 9))
+
+print(Prt_Stop_IMP_plot)
+
+#------------------------------------------------------
+#Caregiver Stopping IMP
+#------------------------------------------------------
+Crr_Stop_IMP_vars <- c("AgreeWithDecisionCrrRSIMP", "HarderLookAfterPartCrrRSIMP", "NoLongerSupportCrrRSIMP",
+                       "HealthIssuesCrrRSIMP", "DifficultSupportDrugCrrRSIMP", "ChangeNotAsExpectedCrrRSIMP",
+                       "TooMuchToManageCrrRSIMP", "FeltSupportedCrrRSIMP"
+)
+
+Crr_Stop_IMP_labels <- c(
+  "AgreeWithDecisionCrrRSIMP" = "Agreement with Participant's decision to stop study drug but continue on the trial",
+  "HarderLookAfterPartCrrRSIMP" = "Participation has made it harder to take care of Participant",
+  "NoLongerSupportCrrRSIMP" = "No longer feel able to support Participant involvement in trial", 
+  "HealthIssuesCrrRSIMP" = "Caregiver has Health Issues that affect their ability to support Participant",
+  "DifficultSupportDrugCrrRSIMP" = "Difficult in supporting Participant to take study drug daily",
+  "ChangeNotAsExpectedCrrRSIMP" = "Level of change in MND expectation not met",
+  "TooMuchToManageCrrRSIMP" = "Participant's MND progression and trial participation was hard to manage",
+  "FeltSupportedCrrRSIMP" = "Perceived support from family members/ friends during the trial"
+)
+
+# ---- filter to caregivers only (those with CrrFeedbackIdCrrFeedback2m) ----
+TraMemPlaArms_Crr_Stop_IMP_clean <- TraMemPlaArms %>%
+  mutate(
+    CrrReasonStopIMPId = as.character(CrrReasonStopIMPId),
+    CrrReasonStopIMPId = trimws(CrrReasonStopIMPId),
+    CrrReasonStopIMPId = if_else(
+      CrrReasonStopIMPId %in% c("", "#NULL!", "NULL", "NA", "<NA>"),
+      NA_character_,
+      CrrReasonStopIMPId
+    )
+  )
+
+TraMemPlaArms_Crr_Stop_IMP <- TraMemPlaArms_Crr_Stop_IMP_clean %>%
+  filter(!is.na(CrrReasonStopIMPId))
+
+# ---- summarise caregiver-only responses ----
+Crr_Stop_IMP_summary <- purrr::map_dfr(Crr_Stop_IMP_vars, function(varname){
+  x <- TraMemPlaArms_Crr_Stop_IMP[[varname]]
+  tibble::tibble(
+    Question = varname,
+    total = sum(x %in% 1:4),      # only actual responses count
+    missing = sum(is.na(x) | !(x %in% 1:4)),
+    Yes = sum(x == 1, na.rm = TRUE),
+    No = sum(x == 2, na.rm = TRUE),
+    Unsure = sum(x == 3, na.rm = TRUE),
+    Prefer_Not = sum(x == 4, na.rm = TRUE)
+  )
+})
+
+# ---- reshape to long and standardise Response ----
+Crr_Stop_IMP_long <- Crr_Stop_IMP_summary %>%
+  pivot_longer(cols = c(Yes, No, Unsure, Prefer_Not),
+               names_to = "Response",
+               values_to = "Count") %>%
+  mutate(
+    perc = ifelse(total > 0, 100 * Count / total, NA_real_),
+    Response = dplyr::case_when(
+      Response %in% c("Yes", "yes", "Y", "y", "1") ~ "Yes",
+      Response %in% c("No", "no", "N", "n", "2") ~ "No",
+      Response %in% c("Unsure", "Not sure", "unsure", "maybe", "3") ~ "Unsure",
+      Response %in% c("Prefer_Not", "Prefer Not", "Prefer not to say", "Prefer not", "4") ~ "Prefer_Not",
+      TRUE ~ Response
+    ),
+    Response = factor(Response, levels = c("Yes", "No", "Unsure", "Prefer_Not")),
+    Question = recode(Question, !!!Crr_Stop_IMP_labels),
+    Question = factor(Question, levels = rev(unname(Crr_Stop_IMP_labels[Crr_Stop_IMP_vars])))
+  )
+
+# ---- check levels ----
+print(levels(Crr_Stop_IMP_long$Response))
+print(sort(unique(as.character(Crr_Stop_IMP_long$Response))))
+
+# ---- plot ----
+fill_colors <- c(
+  "Yes" = "#2E8B57",       # Green
+  "No" = "#B22222",        # Red
+  "Unsure" = "#FF8C00",    # Yellow/Orange
+  "Prefer_Not" = "grey60"  # Grey
+)
+
+fill_labels <- c("Yes", "No", "Unsure", "Prefer not to say")
+
+Crr_Stop_IMP_plot <- ggplot(Crr_Stop_IMP_long, aes(x = Question, y = perc, fill = Response)) +
+  geom_col() +
+  geom_text(aes(label = ifelse(perc >= 5, paste0(round(perc,1), "%"), "")),
+            position = position_stack(vjust = 0.5), size = 3) +
+  coord_flip() +
+  scale_fill_manual(values = fill_colors, labels = fill_labels, drop = FALSE) +
+  labs(title = "Important Reasons for Caregiver for Stopping IMP",
+       x = NULL, y = "Percent (%)") +
+  theme_minimal() +
+  theme(legend.position = "bottom", axis.text.y = element_text(size = 9))
+
+print(Crr_Stop_IMP_plot)
+
+
+#------------------------------------------------------------------------
+#Participant Withdraw from Trial
+#------------------------------------------------------------------------
+Prt_Withdraw_vars <- c("MyDecisionPrtRW", "ChangeNotAsExpectedPrtRW", "SideEffectsPrtRW",
+                       "StudyDrugAllocatedPrtRW", "EaseOfTakingDrugPrtRW", "ImpactOtherConditionsPrtRW",
+                       "ImpactOtherMedicationsPrtRW", "LevelOfContactPrtRW", "NumberTrialAppntsPrtRW",
+                       "TimeCommitmentPrtRW", "OtherIssuesPrtRW", "NotWellEnoughPrtRW", "NaturalCoursePrtRW",
+                        "DiscussDecisionPrtRW"
+)
+
+Prt_Withdraw_labels <- c(
+  "MyDecisionPrtRW" = "Participant considers that it was their decision to stop",
+  "ChangeNotAsExpectedPrtRW" = "Level of change in MND symptoms expectation not met",
+  "SideEffectsPrtRW" = "Side effects of the study drug", 
+  "StudyDrugAllocatedPrtRW" = "Perceived knowledge of the study drug allocated to",
+  "EaseOfTakingDrugPrtRW" = "Ease of taking study drug",
+  "ImpactOtherConditionsPrtRW" = "Impact of the study drug on other conditions",
+  "ImpactOtherMedicationsPrtRW" = "Impact of study drug on other medications they took",
+  "LevelOfContactPrtRW" = "Level of contact with research team", 
+  "NumberTrialAppntsPrtRW" = "Number of trial appointments required",
+  "TimeCommitmentPrtRW" = "Time commitment to participate",
+  "OtherIssuesPrtRW" = "Other issues in life to focus on",
+  "NotWellEnoughPrtRW" = "MND has progressed and no longer feel well to participate", 
+  "NaturalCoursePrtRW" = "Wish to let MND run its natural course", 
+  "DiscussDecisionPrtRW" = "Happy for member of research team to contact for exit interview"
+)
+
+# ---- filter to caregivers only (those with CrrFeedbackIdCrrFeedback2m) ----
+TraMemPlaArms_Prt_Withdraw_clean <- TraMemPlaArms %>%
+  mutate(
+    PrtReasonWithdrawalId = as.character(PrtReasonWithdrawalId),
+    PrtReasonWithdrawalId = trimws(PrtReasonWithdrawalId),
+    PrtReasonWithdrawalId = if_else(
+      PrtReasonWithdrawalId %in% c("", "#NULL!", "NULL", "NA", "<NA>"),
+      NA_character_,
+      PrtReasonWithdrawalId
+    )
+  )
+
+TraMemPlaArms_Prt_Withdraw <- TraMemPlaArms_Prt_Withdraw_clean %>%
+  filter(!is.na(PrtReasonWithdrawalId))
+
+# ---- summarise participant-only responses ----
+Prt_Withdraw_summary <- purrr::map_dfr(Prt_Withdraw_vars, function(varname){
+  x <- TraMemPlaArms_Prt_Withdraw[[varname]]
+  tibble::tibble(
+    Question = varname,
+    total = sum(x %in% 1:4),      # only actual responses count
+    missing = sum(is.na(x) | !(x %in% 1:4)),
+    Yes = sum(x == 1, na.rm = TRUE),
+    No = sum(x == 2, na.rm = TRUE),
+    Unsure = sum(x == 3, na.rm = TRUE),
+    Prefer_Not = sum(x == 4, na.rm = TRUE)
+  )
+})
+
+# ---- reshape to long and standardise Response ----
+Prt_Withdraw_long <- Prt_Withdraw_summary %>%
+  pivot_longer(cols = c(Yes, No, Unsure, Prefer_Not),
+               names_to = "Response",
+               values_to = "Count") %>%
+  mutate(
+    perc = ifelse(total > 0, 100 * Count / total, NA_real_),
+    Response = dplyr::case_when(
+      Response %in% c("Yes", "yes", "Y", "y", "1") ~ "Yes",
+      Response %in% c("No", "no", "N", "n", "2") ~ "No",
+      Response %in% c("Unsure", "Not sure", "unsure", "maybe", "3") ~ "Unsure",
+      Response %in% c("Prefer_Not", "Prefer Not", "Prefer not to say", "Prefer not", "4") ~ "Prefer_Not",
+      TRUE ~ Response
+    ),
+    Response = factor(Response, levels = c("Yes", "No", "Unsure", "Prefer_Not")),
+    Question = recode(Question, !!!Prt_Withdraw_labels),
+    Question = factor(Question, levels = rev(unname(Prt_Withdraw_labels[Prt_Withdraw_vars])))
+  )
+
+# ---- check levels ----
+print(levels(Prt_Withdraw_long$Response))
+print(sort(unique(as.character(Prt_Withdraw_long$Response))))
+
+# ---- plot ----
+fill_colors <- c(
+  "Yes" = "#2E8B57",       # Green
+  "No" = "#B22222",        # Red
+  "Unsure" = "#FF8C00",    # Yellow/Orange
+  "Prefer_Not" = "grey60"  # Grey
+)
+
+fill_labels <- c("Yes", "No", "Unsure", "Prefer not to say")
+
+Prt_Withdraw_plot <- ggplot(Prt_Withdraw_long, aes(x = Question, y = perc, fill = Response)) +
+  geom_col() +
+  geom_text(
+    aes(label = ifelse(perc >= 5, paste0(round(perc,1), "%"), "")),
+    position = position_stack(vjust = 0.5),
+    size = 5,                    # bigger text inside bars
+    fontface = "bold"            # bold text labels
+  ) +
+  coord_flip() +
+  scale_fill_manual(values = fill_colors, labels = fill_labels, drop = FALSE) +
+  labs(title = "Important Reasons for Participants to Withdraw from Trial",
+       x = NULL, y = "Percent (%)") +
+  theme_minimal() +
+  theme(
+    legend.position = "bottom",
+    legend.text = element_text(size = 12, face = "bold"),   # bigger, bolder legend labels
+    legend.title = element_text(size = 13, face = "bold"),
+    axis.text.y = element_text(size = 12, face = "bold"),   # bigger, bolder y-axis labels
+    axis.text.x = element_text(size = 11, face = "bold"),   # bigger, bolder x-axis labels
+    plot.title  = element_text(size = 16, face = "bold", hjust = 0.5) # centered, bold title
+  )
+
+print(Prt_Withdraw_plot)
+
+
+#---------------------------------------------------
+#Caregiver Withdrawing from Trial
+#---------------------------------------------------
+Crr_Withdraw_vars <- c("AgreeWithDecisionCrrRW", "EncouragedRemainCrrRW", "HarderLookAfterPartCrrRW",
+                       "MetExpectationsCrrRW", "LevelOfContactCrrRW", "NumberTrialAppntsCrrRW",
+                       "TimeCommitmentCrrRW", "OtherIssuesCrrRW", "NotWellEnoughCrrRW",
+                       "NaturalCourseCrrRW", "BurdenOfCaringCrrRW", "DiscussDecisionCrrRW"
+)
+
+Crr_Withdraw_labels <- c(
+  "AgreeWithDecisionCrrRW" = "Agree with Participant's decision",
+  "EncouragedRemainCrrRW" = "Encouraged the participant to remain",
+  "HarderLookAfterPartCrrRW" = "Participation made it harder to look after participant", 
+  "MetExpectationsCrrRW" = "Participation met their expectations",
+  "LevelOfContactCrrRW" = "Level of contact with research team",
+  "NumberTrialAppntsCrrRW" = "Number of trial appointments required",
+  "TimeCommitmentCrrRW" = "Time Commitment to participate",
+  "OtherIssuesCrrRW" = "Other issues in life to focus on", 
+  "NotWellEnoughCrrRW" = "Participant's MND progressed and they no longer feel well to participate",
+  "NaturalCourseCrrRW" = "Wish to let participant's MND run its course",
+  "BurdenOfCaringCrrRW" = "Burden of caring and participating was too much",
+  "DiscussDecisionCrrRW" = "Happy for member of research team to contact for exit interview"
+)
+
+# ---- filter to caregivers only (those with CrrFeedbackIdCrrFeedback2m) ----
+TraMemPlaArms_Crr_Withdraw_clean <- TraMemPlaArms %>%
+  mutate(
+    CrrReasonWithdrawalId = as.character(CrrReasonWithdrawalId),
+    CrrReasonWithdrawalId = trimws(CrrReasonWithdrawalId),
+    CrrReasonWithdrawalId = if_else(
+      CrrReasonWithdrawalId %in% c("", "#NULL!", "NULL", "NA", "<NA>"),
+      NA_character_,
+      CrrReasonWithdrawalId
+    )
+  )
+
+TraMemPlaArms_Crr_Withdraw <- TraMemPlaArms_Crr_Withdraw_clean %>%
+  filter(!is.na(CrrReasonWithdrawalId))
+
+# ---- summarise participant-only responses ----
+Crr_Withdraw_summary <- purrr::map_dfr(Crr_Withdraw_vars, function(varname){
+  x <- TraMemPlaArms_Crr_Withdraw[[varname]]
+  tibble::tibble(
+    Question = varname,
+    total = sum(x %in% 1:4),      # only actual responses count
+    missing = sum(is.na(x) | !(x %in% 1:4)),
+    Yes = sum(x == 1, na.rm = TRUE),
+    No = sum(x == 2, na.rm = TRUE),
+    Unsure = sum(x == 3, na.rm = TRUE),
+    Prefer_Not = sum(x == 4, na.rm = TRUE)
+  )
+})
+
+# ---- reshape to long and standardise Response ----
+Crr_Withdraw_long <- Crr_Withdraw_summary %>%
+  pivot_longer(cols = c(Yes, No, Unsure, Prefer_Not),
+               names_to = "Response",
+               values_to = "Count") %>%
+  mutate(
+    perc = ifelse(total > 0, 100 * Count / total, NA_real_),
+    Response = dplyr::case_when(
+      Response %in% c("Yes", "yes", "Y", "y", "1") ~ "Yes",
+      Response %in% c("No", "no", "N", "n", "2") ~ "No",
+      Response %in% c("Unsure", "Not sure", "unsure", "maybe", "3") ~ "Unsure",
+      Response %in% c("Prefer_Not", "Prefer Not", "Prefer not to say", "Prefer not", "4") ~ "Prefer_Not",
+      TRUE ~ Response
+    ),
+    Response = factor(Response, levels = c("Yes", "No", "Unsure", "Prefer_Not")),
+    Question = recode(Question, !!!Crr_Withdraw_labels),
+    Question = factor(Question, levels = rev(unname(Crr_Withdraw_labels[Crr_Withdraw_vars])))
+  )
+
+# ---- check levels ----
+print(levels(Crr_Withdraw_long$Response))
+print(sort(unique(as.character(Crr_Withdraw_long$Response))))
+
+# ---- plot ----
+fill_colors <- c(
+  "Yes" = "#2E8B57",       # Green
+  "No" = "#B22222",        # Red
+  "Unsure" = "#FF8C00",    # Yellow/Orange
+  "Prefer_Not" = "grey60"  # Grey
+)
+
+fill_labels <- c("Yes", "No", "Unsure", "Prefer not to say")
+
+Crr_Withdraw_plot <- ggplot(Crr_Withdraw_long, aes(x = Question, y = perc, fill = Response)) +
+  geom_col() +
+  geom_text(aes(label = ifelse(perc >= 5, paste0(round(perc,1), "%"), "")),
+            position = position_stack(vjust = 0.5), size = 3) +
+  coord_flip() +
+  scale_fill_manual(values = fill_colors, labels = fill_labels, drop = FALSE) +
+  labs(title = "Important Reasons for Caregiver to Withdraw from Trial",
+       x = NULL, y = "Percent (%)") +
+  theme_minimal() +
+  theme(legend.position = "bottom", axis.text.y = element_text(size = 9))
+
+print(Crr_Withdraw_plot)
+
+#------------------------------------------------------------------------
+#Participant Arm Drop
+#------------------------------------------------------------------------
+Prt_Arm_Drop_vars <- c("EnjoyedParticipationPrtArmDrop", "ChooseToReJoinPrtArmDrop", "WantToKnowDrugPrtArmDrop",
+                       "GuessedDrugCorrectlyPrtArmDrop", "ContinueTakingDrugPrtArmDrop", "PositiveEffectPrtArmDrop",
+                       "UnderstandWhyDroppedPrtArmDrop", "ExplainedSufficientlyPrtArmDrop", "ConsideringStoppingPrtArmDrop",
+                       "SupportDecisionPrtArmDrop"
+)
+
+Prt_Arm_Drop_labels <- c(
+  "EnjoyedParticipationPrtArmDrop" = "Participant enjoyed participation",
+  "ChooseToReJoinPrtArmDrop" = "Would like to re-join MND-SMART if possible",
+  "WantToKnowDrugPrtArmDrop" = "Participant wants to know the allocated study drug", 
+  "GuessedDrugCorrectlyPrtArmDrop" = "Participant guessed the allocated study drug correctly",
+  "ContinueTakingDrugPrtArmDrop" = "Participant wishes to continue taking study drug",
+  "PositiveEffectPrtArmDrop" = "Participant felt a positive effect on MND from study study drug",
+  "UnderstandWhyDroppedPrtArmDrop" = "Participant understood why study drug was dropped",
+  "ExplainedSufficientlyPrtArmDrop" = "The possibility of dropping study drug was explained sufficiently at the start", 
+  "ConsideringStoppingPrtArmDrop" = "Participant was considering stopping IMP or withdrawing",
+  "SupportDecisionPrtArmDrop" = "Participant is supportive of the decision to drop study drug"
+)
+
+# ---- filter to participants only (those with PrtArmDropId) ----
+TraMemPlaArms_Prt_Arm_Drop_clean <- TraMemPlaArms %>%
+  mutate(
+    PrtArmDropId = as.character(PrtArmDropId),
+    PrtArmDropId = trimws(PrtArmDropId),
+    PrtArmDropId = if_else(
+      PrtArmDropId %in% c("", "#NULL!", "NULL", "NA", "<NA>"),
+      NA_character_,
+      PrtArmDropId
+    )
+  )
+
+TraMemPlaArms_Prt_Arm_Drop <- TraMemPlaArms_Prt_Arm_Drop_clean %>%
+  filter(!is.na(PrtArmDropId))
+
+# ---- summarise participant-only responses ----
+Prt_Arm_Drop_summary <- purrr::map_dfr(Prt_Arm_Drop_vars, function(varname){
+  x <- TraMemPlaArms_Prt_Arm_Drop[[varname]]
+  tibble::tibble(
+    Question = varname,
+    total = sum(x %in% 1:4),      # only actual responses count
+    missing = sum(is.na(x) | !(x %in% 1:4)),
+    Yes = sum(x == 1, na.rm = TRUE),
+    No = sum(x == 2, na.rm = TRUE),
+    Unsure = sum(x == 3, na.rm = TRUE),
+    Prefer_Not = sum(x == 4, na.rm = TRUE)
+  )
+})
+
+# ---- reshape to long and standardise Response ----
+Prt_Arm_Drop_long <- Prt_Arm_Drop_summary %>%
+  pivot_longer(cols = c(Yes, No, Unsure, Prefer_Not),
+               names_to = "Response",
+               values_to = "Count") %>%
+  mutate(
+    perc = ifelse(total > 0, 100 * Count / total, NA_real_),
+    Response = dplyr::case_when(
+      Response %in% c("Yes", "yes", "Y", "y", "1") ~ "Yes",
+      Response %in% c("No", "no", "N", "n", "2") ~ "No",
+      Response %in% c("Unsure", "Not sure", "unsure", "maybe", "3") ~ "Unsure",
+      Response %in% c("Prefer_Not", "Prefer Not", "Prefer not to say", "Prefer not", "4") ~ "Prefer_Not",
+      TRUE ~ Response
+    ),
+    Response = factor(Response, levels = c("Yes", "No", "Unsure", "Prefer_Not")),
+    Question = recode(Question, !!!Prt_Arm_Drop_labels),
+    Question = factor(Question, levels = rev(unname(Prt_Arm_Drop_labels[Prt_Arm_Drop_vars])))
+  )
+
+# ---- check levels ----
+print(levels(Prt_Arm_Drop_long$Response))
+print(sort(unique(as.character(Prt_Arm_Drop_long$Response))))
+
+# ---- plot ----
+fill_colors <- c(
+  "Yes" = "#2E8B57",       # Green
+  "No" = "#B22222",        # Red
+  "Unsure" = "#FF8C00",    # Yellow/Orange
+  "Prefer_Not" = "grey60"  # Grey
+)
+
+fill_labels <- c("Yes", "No", "Unsure", "Prefer not to say")
+
+Prt_Arm_Drop_plot <- ggplot(Prt_Arm_Drop_long, aes(x = Question, y = perc, fill = Response)) +
+  geom_col() +
+  geom_text(
+    aes(label = ifelse(perc >= 5, paste0(round(perc,1), "%"), "")),
+    position = position_stack(vjust = 0.5),
+    size = 5,                    # bigger text inside bars
+    fontface = "bold"            # bold text labels
+  ) +
+  coord_flip() +
+  scale_fill_manual(values = fill_colors, labels = fill_labels, drop = FALSE) +
+  labs(title = "Participant Feedback of Study Arm Dropping",
+       x = NULL, y = "Percent (%)") +
+  theme_minimal() +
+  theme(
+    legend.position = "bottom",
+    legend.text = element_text(size = 12, face = "bold"),   # bigger, bolder legend labels
+    legend.title = element_text(size = 13, face = "bold"),
+    axis.text.y = element_text(size = 12, face = "bold"),   # bigger, bolder y-axis labels
+    axis.text.x = element_text(size = 11, face = "bold"),   # bigger, bolder x-axis labels
+    plot.title  = element_text(size = 16, face = "bold", hjust = 0.5) # centered, bold title
+  )
+
+print(Prt_Arm_Drop_plot)
+
+#----------------------------------------------------------------
+#Caregiver Arm Drop
+#----------------------------------------------------------------
+Crr_Arm_Drop_vars <- c("PositiveExperienceCrrArmDrop", "SupportedParticipationCrrArmDrop", "WantedPartToStopCrrArmDrop",
+                       "HarderLookAfterPartCrrArmDrop", "DisappointedDrugDropCrrArmDrop", "SupportDecisionCrrArmDrop",
+                       "LikePartReJoinCrrArmDrop", "ExplainedSufficientlyCrrArmDrop", "PositiveEffectCrrArmDrop"
+)
+
+Crr_Arm_Drop_labels <- c(
+  "PositiveExperienceCrrArmDrop" = "Caregiver enjoyed participation",
+  "SupportedParticipationCrrArmDrop" = "Caregiver was supportive to participate",
+  "WantedPartToStopCrrArmDrop" = "Caregiver wanted participant to stop IMP or withdraw before Arm Drop", 
+  "HarderLookAfterPartCrrArmDrop" = "Participation made it harder to look after participant",
+  "DisappointedDrugDropCrrArmDrop" = "Caregiver was disappointed that study arm was dropped",
+  "SupportDecisionCrrArmDrop" = "Caregiver supports decision to drop study drug",
+  "LikePartReJoinCrrArmDrop" = "Caregiver would like to rejoin if possible",
+  "ExplainedSufficientlyCrrArmDrop" = "The possibility of dropping study drug was explained sufficiently at the start", 
+  "PositiveEffectCrrArmDrop" = "Caregiver believed that study drug had a positive effect on participant"
+)
+
+# ---- filter to participants only (those with CrrArmDropId) ----
+TraMemPlaArms_Crr_Arm_Drop_clean <- TraMemPlaArms %>%
+  mutate(
+    CrrArmDropId = as.character(CrrArmDropId),
+    CrrArmDropId = trimws(CrrArmDropId),
+    CrrArmDropId = if_else(
+      CrrArmDropId %in% c("", "#NULL!", "NULL", "NA", "<NA>"),
+      NA_character_,
+      CrrArmDropId
+    )
+  )
+
+TraMemPlaArms_Crr_Arm_Drop <- TraMemPlaArms_Crr_Arm_Drop_clean %>%
+  filter(!is.na(CrrArmDropId))
+
+# ---- summarise participant-only responses ----
+Crr_Arm_Drop_summary <- purrr::map_dfr(Crr_Arm_Drop_vars, function(varname){
+  x <- TraMemPlaArms_Crr_Arm_Drop[[varname]]
+  tibble::tibble(
+    Question = varname,
+    total = sum(x %in% 1:4),      # only actual responses count
+    missing = sum(is.na(x) | !(x %in% 1:4)),
+    Yes = sum(x == 1, na.rm = TRUE),
+    No = sum(x == 2, na.rm = TRUE),
+    Unsure = sum(x == 3, na.rm = TRUE),
+    Prefer_Not = sum(x == 4, na.rm = TRUE)
+  )
+})
+
+# ---- reshape to long and standardise Response ----
+Crr_Arm_Drop_long <- Crr_Arm_Drop_summary %>%
+  pivot_longer(cols = c(Yes, No, Unsure, Prefer_Not),
+               names_to = "Response",
+               values_to = "Count") %>%
+  mutate(
+    perc = ifelse(total > 0, 100 * Count / total, NA_real_),
+    Response = dplyr::case_when(
+      Response %in% c("Yes", "yes", "Y", "y", "1") ~ "Yes",
+      Response %in% c("No", "no", "N", "n", "2") ~ "No",
+      Response %in% c("Unsure", "Not sure", "unsure", "maybe", "3") ~ "Unsure",
+      Response %in% c("Prefer_Not", "Prefer Not", "Prefer not to say", "Prefer not", "4") ~ "Prefer_Not",
+      TRUE ~ Response
+    ),
+    Response = factor(Response, levels = c("Yes", "No", "Unsure", "Prefer_Not")),
+    Question = recode(Question, !!!Crr_Arm_Drop_labels),
+    Question = factor(Question, levels = rev(unname(Crr_Arm_Drop_labels[Crr_Arm_Drop_vars])))
+  )
+
+# ---- check levels ----
+print(levels(Crr_Arm_Drop_long$Response))
+print(sort(unique(as.character(Crr_Arm_Drop_long$Response))))
+
+# ---- plot ----
+fill_colors <- c(
+  "Yes" = "#2E8B57",       # Green
+  "No" = "#B22222",        # Red
+  "Unsure" = "#FF8C00",    # Yellow/Orange
+  "Prefer_Not" = "grey60"  # Grey
+)
+
+fill_labels <- c("Yes", "No", "Unsure", "Prefer not to say")
+
+Crr_Arm_Drop_plot <- ggplot(Crr_Arm_Drop_long, aes(x = Question, y = perc, fill = Response)) +
+  geom_col() +
+  geom_text(
+    aes(label = ifelse(perc >= 5, paste0(round(perc,1), "%"), "")),
+    position = position_stack(vjust = 0.5),
+    size = 5,                    # bigger text inside bars
+    fontface = "bold"            # bold text labels
+  ) +
+  coord_flip() +
+  scale_fill_manual(values = fill_colors, labels = fill_labels, drop = FALSE) +
+  labs(title = "Caregiver Feedback at Study Arm Dropping",
+       x = NULL, y = "Percent (%)") +
+  theme_minimal() +
+  theme(
+    legend.position = "bottom",
+    legend.text = element_text(size = 12, face = "bold"),   # bigger, bolder legend labels
+    legend.title = element_text(size = 13, face = "bold"),
+    axis.text.y = element_text(size = 12, face = "bold"),   # bigger, bolder y-axis labels
+    axis.text.x = element_text(size = 11, face = "bold"),   # bigger, bolder x-axis labels
+    plot.title  = element_text(size = 16, face = "bold", hjust = 0.5) # centered, bold title
+  )
+
+print(Crr_Arm_Drop_plot)
