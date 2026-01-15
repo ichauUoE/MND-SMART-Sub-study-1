@@ -16,10 +16,27 @@ library(stringr)
 #Upload main dataset
 TraMemPlaArms <- read_csv("MNDSMART_MaindatasetDS v2.0.csv")
 
+SS1 <- TraMemPlaArms %>%
+   filter(ConsentSS1 == 1)
+
+SS1 <- SS1 %>%
+  mutate(
+    DateOfConsentSS1   = dmy(na_if(as.character(DateOfConsentSS1),   "#NULL!")),
+    DateofStoppingIMP  = dmy(na_if(as.character(DateofStoppingIMP),  "#NULL!")),
+    DateofFullWithdrawal = dmy(na_if(as.character(DateofFullWithdrawal), "#NULL!"))
+  ) %>%
+  mutate(
+    Month2_Date = DateOfConsentSS1 %m+% months(2),
+    Month6_Date = DateOfConsentSS1 %m+% months(6),
+    StoppedBeforeM2 = if_else(!is.na(DateofStoppingIMP)   & DateofStoppingIMP  < Month2_Date, 1L, 0L),
+    WithdrawnBeforeM2 = if_else(!is.na(DateofFullWithdrawal) & DateofFullWithdrawal < Month2_Date, 1L, 0L),
+    StoppedBeforeM6 = if_else(!is.na(DateofStoppingIMP)   & DateofStoppingIMP  < Month6_Date, 1L, 0L),
+    WithdrawnBeforeM6 = if_else(!is.na(DateofFullWithdrawal) & DateofFullWithdrawal < Month6_Date, 1L, 0L)
+  )
 #---------------------------
 # 0) Define dyad population
 #---------------------------
-Dyads <- TraMemPlaArms %>%
+Dyads <- SS1 %>%
   filter(ConsentSS1 == 1, CarerConsentSS1 == 1)
 
 #---------------------------------------
