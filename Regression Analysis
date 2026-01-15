@@ -1,0 +1,1601 @@
+library(tidyverse)
+library(tidyr)
+library(purrr)
+library(tibble)
+library(ggplot2)
+library(broom)       
+library(janitor)  
+library(stringr)
+
+TraMemPlaArms <- read_csv("MNDSMART_MaindatasetDS v2.0.csv")
+
+SS1 <- TraMemPlaArms %>% 
+  filter(ConsentSS1 == 1)
+#------------------------------------------------------------------------
+#Regression Analysis Preparation- define analysis population (SS1 only)
+#------------------------------------------------------------------------
+library(dplyr)
+library(lubridate)
+
+# 0. Analysis population: Sub-study 1 only
+# 1. Clean / parse dates ONCE
+SS1 <- SS1 %>%
+  mutate(
+    DateOfConsentSS1   = dmy(na_if(as.character(DateOfConsentSS1),   "#NULL!")),
+    DateofStoppingIMP  = dmy(na_if(as.character(DateofStoppingIMP),  "#NULL!")),
+    DateofFullWithdrawal = dmy(na_if(as.character(DateofFullWithdrawal), "#NULL!"))
+  ) %>%
+  mutate(
+    Month2_Date = DateOfConsentSS1 %m+% months(2),
+    Month6_Date = DateOfConsentSS1 %m+% months(6),
+    StoppedBeforeM2 = if_else(!is.na(DateofStoppingIMP)   & DateofStoppingIMP  < Month2_Date, 1L, 0L),
+    WithdrawnBeforeM2 = if_else(!is.na(DateofFullWithdrawal) & DateofFullWithdrawal < Month2_Date, 1L, 0L),
+    StoppedBeforeM6 = if_else(!is.na(DateofStoppingIMP)   & DateofStoppingIMP  < Month6_Date, 1L, 0L),
+    WithdrawnBeforeM6 = if_else(!is.na(DateofFullWithdrawal) & DateofFullWithdrawal < Month6_Date, 1L, 0L)
+  )
+
+# 2. Clean ALSFRS-R once
+clean_als <- function(x) {
+  x <- trimws(as.character(x))
+  x[x %in% c("", " ", ".", "NA", "#NULL!")] <- NA
+  as.numeric(x)
+}
+
+SS1 <- SS1 %>%
+  mutate(
+    ALS_0 = clean_als(ALS_0),
+    ALS_2 = clean_als(ALS_2),
+    ALS_6 = clean_als(ALS_6)
+  )
+
+#----------------------------------------------------------------------------------------------------------------
+#Variable Group 1: Univariate and Multivariate Analysis of Disappointment in Drug Effect at Screening vs Month 6 
+#----------------------------------------------------------------------------------------------------------------
+#----------------------------------------------------------
+# 1. KEEP ONLY participants still active at Month 6
+#----------------------------------------------------------
+ActiveM6 <- SS1 %>%
+  filter(StoppedBeforeM6 == 0 & WithdrawnBeforeM6 == 0)
+
+#----------------------------------------------------------
+# 2. Create exposure variable:
+# Screening expectation = Yes (1)
+# AND Month 6 effect = No (2)
+#----------------------------------------------------------
+ActiveM6 <- ActiveM6 %>%
+  mutate(
+    Exp_Pos_NoEff = if_else(
+      PositiveEffectPrtExpctScrn == 1 &
+        DrugEffectExpectedPrtFeedback6m == 2,
+      1L, 0L
+    )
+  )
+
+#----------------------------------------------------------
+# 3. UNIVARIATE: Stopped IMP
+#----------------------------------------------------------
+uni_stopped <- glm(
+  StoppedIMP ~ Exp_Pos_NoEff,
+  data = ActiveM6,
+  family = binomial
+)
+
+summary(uni_stopped)
+exp(cbind(OR = coef(uni_stopped), confint(uni_stopped)))
+
+#----------------------------------------------------------
+# 4. MULTIVARIATE: Stopped IMP
+#----------------------------------------------------------
+#Switch Reference to Placebo for Allocated Drug
+ActiveM6 <- ActiveM6 %>%
+  mutate(AllocatedDrug = factor(AllocatedDrug, levels = c("3","1","2")))
+
+multi_stopped <- glm(
+  StoppedIMP ~ Exp_Pos_NoEff + Age + factor(SexAtBirth) + ALS_0 + ALS_6 + factor(AllocatedDrug),
+  data = ActiveM6,
+  family = binomial
+)
+
+summary(multi_stopped)
+exp(cbind(OR = coef(multi_stopped), confint(multi_stopped)))
+
+#----------------------------------------------------------
+# 5. UNIVARIATE: Full Withdrawal
+#----------------------------------------------------------
+uni_withdraw <- glm(
+  FullWithdrawal ~ Exp_Pos_NoEff,
+  data = ActiveM6,
+  family = binomial
+)
+
+summary(uni_withdraw)
+exp(cbind(OR = coef(uni_withdraw), confint(uni_withdraw)))
+
+#----------------------------------------------------------
+# 6. MULTIVARIATE: Full Withdrawal
+#----------------------------------------------------------
+multi_withdraw <- glm(
+  FullWithdrawal ~ Exp_Pos_NoEff + Age + factor(SexAtBirth) + ALS_0 + ALS_6 + factor(AllocatedDrug),
+  data = ActiveM6,
+  family = binomial
+)
+
+summary(multi_withdraw)
+exp(cbind(OR = coef(multi_withdraw), confint(multi_withdraw)))
+
+#-------------------------------------------------------------------------------
+#Variable Group 2: Univariate and Multivariate analysis of Time Commitment
+#-------------------------------------------------------------------------------
+#Month 6 Responses
+SS1 <- SS1 %>%
+  mutate(
+    # Participant: time commitment concern (Yes=1; No/Unsure/Prefer not=0)
+    prt_time_M6 = case_when(
+      TimeCommitmentPrtFeedback6m == 1 ~ 1L,
+      TimeCommitmentPrtFeedback6m %in% c(2, 3, 4) ~ 0L,
+      TRUE ~ NA_integer_
+    ),
+    
+    # Caregiver: negative impact on other activities (Yes=1; No/Unsure/Prefer not=0)
+    crr_time_M6 = case_when(
+      NegOtherActivitiesCrrFeedback6m == 1 ~ 1L,
+      NegOtherActivitiesCrrFeedback6m %in% c(2, 3, 4) ~ 0L,
+      TRUE ~ NA_integer_
+    ),
+    
+    # Dyadic burden index (0–2): number endorsing concern
+    TimeCommitmentConcern_Count_M6 = case_when(
+      is.na(prt_time_M6) & is.na(crr_time_M6) ~ NA_integer_,
+      TRUE ~ coalesce(prt_time_M6, 0L) + coalesce(crr_time_M6, 0L)
+    )
+  )
+
+Eligible_M6 <- SS1 %>%
+  filter(StoppedBeforeM6 == 0 & WithdrawnBeforeM6 == 0)
+
+#Counting Responses of those who Stopped IMP and Withdrawn at Month 6= No Responses
+table(Eligible_M6$TimeCommitmentConcern_Count_M6, useNA = "ifany")
+with(Eligible_M6, table(prt_time_M6, crr_time_M6, useNA = "ifany"))
+
+table(Eligible_M6$TimeCommitmentConcern_Count_M6,Eligible_M6$StoppedIMP)
+table(Eligible_M6$TimeCommitmentConcern_Count_M6,Eligible_M6$FullWithdrawal)
+
+
+#Month 2 Responses
+SS1 <- SS1 %>%
+  mutate(
+    # Participant: time commitment concern (Yes=1; No/Unsure/Prefer not=0)
+    prt_time_M2 = case_when(
+      TimeCommitmentPrtFeedback2m == 1 ~ 1L,
+      TimeCommitmentPrtFeedback2m %in% c(2, 3, 4) ~ 0L,
+      TRUE ~ NA_integer_
+    ),
+    
+    # Caregiver: negative impact on other activities (Yes=1; No/Unsure/Prefer not=0)
+    crr_time_M2 = case_when(
+      NegOtherActivitiesCrrFeedback2m == 1 ~ 1L,
+      NegOtherActivitiesCrrFeedback2m %in% c(2, 3, 4) ~ 0L,
+      TRUE ~ NA_integer_
+    ),
+    
+    # Dyadic burden index (0–2): number endorsing concern
+    TimeCommitmentConcern_Count_M2 = case_when(
+      is.na(prt_time_M2) & is.na(crr_time_M2) ~ NA_integer_,
+      TRUE ~ coalesce(prt_time_M2, 0L) + coalesce(crr_time_M2, 0L)
+    )
+  )
+
+#Censor to those who were active at Month 2
+Eligible_M2 <- SS1 %>%
+  filter(StoppedBeforeM2 == 0 & WithdrawnBeforeM2 == 0)
+
+table(Eligible_M2$TimeCommitmentConcern_Count_M2, useNA = "ifany")
+with(Eligible_M2, table(prt_time_M, crr_time_M2, useNA = "ifany"))
+
+#Counting Responses of those who Stopped IMP and Withdrawan at Month 2= 
+table(Eligible_M2$TimeCommitmentConcern_Combined_M2,Eligible_M2$StoppedIMP)
+table(Eligible_M2$TimeCommitmentConcern_Combined_M2,Eligible_M2$FullWithdrawal)
+
+Eligible_M2 <- Eligible_M2 %>%
+  mutate(
+    AnyTimeBurden_M2 = if_else(TimeCommitmentConcern_Count_M2 >= 1, 1L, 0L)
+  )
+
+Eligible_M2 <- Eligible_M2 %>%
+  mutate(AllocatedDrug = factor(AllocatedDrug, levels = c("3","1","2")))
+
+#Stopped IMP
+uni_time_concern <- glm(StoppedIMP ~ AnyTimeBurden_M2, family=binomial, data=Eligible_M2)
+
+multi_time_concern <- glm(StoppedIMP ~ AnyTimeBurden_M2 + Age + factor(SexAtBirth) + ALS_2 + factor(AllocatedDrug),
+    family=binomial, data=Eligible_M2)
+
+summary(uni_time_concern)
+exp(cbind(OR = coef(uni_time_concern), confint(uni_time_concern)))
+
+summary(multi_time_concern)
+exp(cbind(OR = coef(multi_time_concern), confint(multi_time_concern)))
+
+#Full Withdraw from Trial
+uni_time_concern_withdraw <- glm(FullWithdrawal ~ AnyTimeBurden_M2, family=binomial, data=Eligible_M2)
+
+multi_time_concern_withdraw <- glm(FullWithdrawal ~ AnyTimeBurden_M2 + Age + factor(SexAtBirth) + ALS_2 + factor(AllocatedDrug),
+                          family=binomial, data=Eligible_M2)
+
+summary(uni_time_concern_withdraw)
+exp(cbind(OR = coef(uni_time_concern_withdraw), confint(uni_time_concern_withdraw)))
+
+summary(multi_time_concern_withdraw)
+exp(cbind(OR = coef(multi_time_concern_withdraw), confint(multi_time_concern_withdraw)))
+
+#---------------------------------------------------------------------------------------
+#Variable Group 3: Univariate and Multivariate logistic regression on Travel Distance
+#---------------------------------------------------------------------------------------
+# 1. CLEAN TRAVEL TIME VARS
+SS1 <- SS1 %>%
+  mutate(
+    TimeToTravelMnsPrtExpctScrn   = as.numeric(na_if(TimeToTravelMnsPrtExpctScrn,   "#NULL!")),
+    TimeToTravelMnsPrtFeedback2m  = as.numeric(na_if(TimeToTravelMnsPrtFeedback2m,  "#NULL!")),
+    TimeToTravelMnsPrtFeedback6m  = as.numeric(na_if(TimeToTravelMnsPrtFeedback6m,  "#NULL!")),
+    
+    TravelScreen_cat = case_when(
+      TimeToTravelMnsPrtExpctScrn < 30 ~ "<30 min",
+      TimeToTravelMnsPrtExpctScrn >= 30 & TimeToTravelMnsPrtExpctScrn <= 60 ~ "30-60 min",
+      TimeToTravelMnsPrtExpctScrn >= 60 & TimeToTravelMnsPrtExpctScrn <= 90 ~ "60-90 min",
+      TRUE ~ NA_character_
+    ),
+    TravelM2_cat = case_when(
+      TimeToTravelMnsPrtFeedback2m < 30 ~ "<30 min",
+      TimeToTravelMnsPrtFeedback2m >= 30 & TimeToTravelMnsPrtFeedback2m <= 60 ~ "30-60 min",
+      TimeToTravelMnsPrtFeedback2m >= 60 & TimeToTravelMnsPrtFeedback2m <= 90 ~ "60-90 min",
+      TRUE ~ NA_character_
+    ),
+    TravelM6_cat = case_when(
+      TimeToTravelMnsPrtFeedback6m < 30 ~ "<30 min",
+      TimeToTravelMnsPrtFeedback6m >= 30 & TimeToTravelMnsPrtFeedback6m <= 60 ~ "30-60 min",
+      TimeToTravelMnsPrtFeedback6m >= 60 & TimeToTravelMnsPrtFeedback6m <= 90 ~ "60-90 min",
+      TRUE ~ NA_character_
+    ),
+    TravelScreen_cat = factor(TravelScreen_cat, levels = c("<30 min", "30-60 min", "60-90 min")),
+    TravelM2_cat     = factor(TravelM2_cat,     levels = c("<30 min", "30-60 min", "60-90 min")),
+    TravelM6_cat     = factor(TravelM6_cat,     levels = c("<30 min", "30-60 min", "60-90 min"))
+  )
+
+summary(SS1$TravelScreen_cat)
+summary(SS1$TravelM2_cat)
+summary(SS1$TravelM6_cat)
+
+table(SS1$TravelScreen_cat,SS1$StoppedIMP)
+table(SS1$TravelM2_cat,SS1$StoppedIMP)
+table(SS1$TravelM6_cat,SS1$StoppedIMP)
+
+table(SS1$TravelScreen_cat,SS1$FullWithdrawal)
+table(SS1$TravelM2_cat,SS1$FullWithdrawal)
+table(SS1$TravelM6_cat,SS1$FullWithdrawal)
+
+# 2. Eligibility
+Eligible_Screen <- SS1
+Eligible_M2     <- SS1 %>% filter(StoppedBeforeM2 == 0 & WithdrawnBeforeM2 == 0)
+Eligible_M6     <- SS1 %>% filter(StoppedBeforeM6 == 0 & WithdrawnBeforeM6 == 0)
+
+Eligible_Screen <- Eligible_Screen %>%
+  mutate(AllocatedDrug = factor(AllocatedDrug, levels = c("3","1","2")))
+
+Eligible_M6 <- Eligible_M6 %>%
+  mutate(AllocatedDrug = factor(AllocatedDrug, levels = c("3","1","2")))
+
+#Stopped IMP: Univariate models: Travel time at screening, Month 2, and Month 6
+uni_screen_stop <- glm(StoppedIMP ~ TravelScreen_cat, data = Eligible_Screen, family = binomial)
+
+uni_m2_stop     <- glm(StoppedIMP ~ TravelM2_cat,     data = Eligible_M2,     family = binomial)
+
+uni_m6_stop     <- glm(StoppedIMP ~ TravelM6_cat,     data = Eligible_M6,     family = binomial)
+
+
+
+# Multivariate models: Adjusted for Age, Sex, Baseline ALS-FRS(R), Allocated Drug
+multi_model_travel_screen_stoppedIMP <- glm(
+  StoppedIMP ~ TravelScreen_cat + Age + factor(SexAtBirth) + ALS_0 + factor(AllocatedDrug),
+  data = Eligible_Screen,
+  family = binomial
+)
+
+multi_model_travel_m2_stoppedIMP <- glm(
+  StoppedIMP ~ TravelM2_cat + Age + factor(SexAtBirth) + ALS_2 + factor(AllocatedDrug),
+  data = Eligible_M2,
+  family = binomial
+)
+
+multi_model_travel_m6_stoppedIMP <- glm(
+  StoppedIMP ~ TravelM6_cat + Age + factor(SexAtBirth) + ALS_6 + factor(AllocatedDrug),
+  data = Eligible_M6,
+  family = binomial
+)
+
+# View model summaries
+summary(uni_screen_stop)
+summary(uni_m2_stop)
+summary(uni_m6_stop)
+
+summary(multi_model_travel_screen_stoppedIMP)
+summary(multi_model_travel_m2_stoppedIMP)
+summary(multi_model_travel_m6_stoppedIMP)
+
+#Get Odds Ratios and 95% CIs
+exp(cbind(OR = coef(uni_screen_stop), confint(uni_screen_stop)))
+exp(cbind(OR = coef(uni_m2_stop), confint(uni_m2_stop)))
+exp(cbind(OR = coef(uni_m6_stop), confint(uni_m6_stop)))
+
+exp(cbind(OR = coef(multi_model_travel_screen_stoppedIMP), confint(multi_model_travel_screen_stoppedIMP)))
+exp(cbind(OR = coef(multi_model_travel_m2_stoppedIMP), confint(multi_model_travel_m2_stoppedIMP)))
+exp(cbind(OR = coef(multi_model_travel_m6_stoppedIMP), confint(multi_model_travel_m6_stoppedIMP)))
+
+
+# Withdrawal: Univariate models: Travel time at Screening, Month 2, and Month 6
+uni_model_travel_screen_Withdrawn <- glm(
+  FullWithdrawal ~ TravelScreen_cat,
+  data = Eligible_Screen,
+  family = binomial
+)
+
+uni_model_travel_m2_Withdraw <- glm(
+  FullWithdrawal ~ TravelM2_cat,
+  data = Eligible_M2,
+  family = binomial
+)
+
+uni_model_travel_m6_Withdraw <- glm(
+  FullWithdrawal ~ TravelM6_cat,
+  data = Eligible_M6,
+  family = binomial
+)
+
+# Multivariate models: Adjusted for Age, Sex, and MND Subtype
+multi_model_travel_screen_Withdraw <- glm(
+  FullWithdrawal ~ TravelScreen_cat + Age + factor(SexAtBirth) + ALS_0 + factor(AllocatedDrug),
+  data = Eligible_Screen,
+  family = binomial
+)
+
+multi_model_travel_m2_Withdraw <- glm(
+  FullWithdrawal ~ TravelM2_cat + Age + factor(SexAtBirth) + ALS_2 + factor(AllocatedDrug),
+  data = Eligible_M2,
+  family = binomial
+)
+
+multi_model_travel_m6_Withdraw <- glm(
+  FullWithdrawal ~ TravelM6_cat + Age + factor(SexAtBirth) + ALS_6 + factor(AllocatedDrug),
+  data = Eligible_M6,
+  family = binomial
+)
+
+# View model summaries
+summary(uni_model_travel_screen_Withdrawn)
+summary(uni_model_travel_m2_Withdraw)
+summary(uni_model_travel_m6_Withdraw)
+
+summary(multi_model_travel_screen_Withdraw)
+summary(multi_model_travel_m2_Withdraw)
+summary(multi_model_travel_m6_Withdraw)
+
+# Get Odds Ratios and 95% CIs
+exp(cbind(OR = coef(uni_model_travel_screen_Withdrawn), confint(uni_model_travel_screen_Withdrawn)))
+exp(cbind(OR = coef(uni_model_travel_m2_Withdraw), confint(uni_model_travel_m2_Withdraw)))
+exp(cbind(OR = coef(uni_model_travel_m6_Withdraw), confint(uni_model_travel_m6_Withdraw)))
+
+
+exp(cbind(OR = coef(multi_model_travel_screen_Withdraw), confint(multi_model_travel_screen_Withdraw)))
+exp(cbind(OR = coef(multi_model_travel_m2_Withdraw), confint(multi_model_travel_m2_Withdraw)))
+exp(cbind(OR = coef(multi_model_travel_m6_Withdraw), confint(multi_model_travel_m6_Withdraw)))
+
+#--------------------------------------------------------------------------------
+#Variable Group 4: Desiring regular contact with health-care professionals
+#--------------------------------------------------------------------------------
+#---------------------------------------------------------------
+# Create binary predictors for endorsement (Yes = 1, Others = 0)
+#---------------------------------------------------------------
+SS1 <- SS1 %>%
+  mutate(
+    Endorse_AddAppointments = ifelse(AdditionalAppntsPrtExpctScrn == 1, 1L, 0L),
+    Endorse_MoreRegContact = ifelse(RegConHealthProfPrtExpctScrn == 1, 1L, 0L),
+    Endorse_Both = ifelse(
+      Endorse_AddAppointments == 1 & Endorse_MoreRegContact == 1, 1L, 0L
+    )
+  )
+
+table(SS1$Endorse_Both)
+table(SS1$Endorse_AddAppointments)
+table(SS1$Endorse_MoreRegContact)
+
+#---------------------------------------------------------------
+# UNIVARIATE MODELS
+#---------------------------------------------------------------
+# Univariate models for stopping IMP and full withdrawal
+uni_stopped_both <- glm(
+  StoppedIMP ~ Endorse_Both,
+  data = SS1,
+  family = binomial
+)
+
+uni_withdraw_both <- glm(
+  FullWithdrawal ~ Endorse_Both,
+  data = SS1,
+  family = binomial
+)
+
+summary(uni_stopped_both)
+summary(uni_withdraw_both)
+
+# Odds Ratios + 95% CI
+exp(cbind(OR = coef(uni_stopped_both), confint(uni_stopped_both)))
+exp(cbind(OR = coef(uni_withdraw_both), confint(uni_withdraw_both)))
+
+#------------------------------------------------------------------------------------
+# MULTIVARIATE MODELS: Adjust Age and Sex and Baseline ALS-FRS(R) and Site of Onset
+#------------------------------------------------------------------------------------
+SS1 <- SS1 %>% 
+  mutate(AllocatedDrug = factor(AllocatedDrug, levels = c("3","1","2")))
+  
+multi_stopped_both <- glm(
+  StoppedIMP ~ Endorse_Both + Age + factor(SexAtBirth) + ALS_0 + factor(AllocatedDrug),
+  data = SS1,
+  family = binomial
+)
+
+multi_withdraw_both <- glm(
+  FullWithdrawal ~ Endorse_Both + Age + factor(SexAtBirth)  + ALS_0 + factor(AllocatedDrug),
+  data = SS1,
+  family = binomial
+)
+
+summary(multi_stopped_both)
+summary(multi_withdraw_both)
+
+# Odds Ratios + 95% CI
+exp(cbind(OR = coef(multi_stopped_both), confint(multi_stopped_both)))
+exp(cbind(OR = coef(multi_withdraw_both), confint(multi_withdraw_both)))
+
+#----------------------------------------------------------------------------------------
+#Variable Group 5: Altruism in helping other MND patients and contribute to research
+#----------------------------------------------------------------------------------------
+SS1 <- SS1 %>%
+  mutate(
+    Endorse_HelpOthers         = ifelse(HelpOthersPrtExpctScrn == 1, 1L, 0L),
+    Endorse_ContributeResearch = ifelse(ContributeResearchPrtExpctScrn == 1, 1L, 0L),
+    Endorse_HelpOthers_ContributeResearch =
+      ifelse(Endorse_HelpOthers == 1 & Endorse_ContributeResearch == 1, 1L, 0L)
+  )
+
+table(SS1$Endorse_HelpOthers_ContributeResearch)
+table(SS1$HelpOthersPrtExpctScrn)
+table(SS1$ContributeResearchPrtExpctScrn)
+
+#---------------------------------------------------------------
+# UNIVARIATE MODELS
+#---------------------------------------------------------------
+# Univariate models for stopping IMP and full withdrawal
+uni_stopped_altruism <- glm(
+  StoppedIMP ~ Endorse_HelpOthers_ContributeResearch,
+  data = SS1,
+  family = binomial
+)
+
+uni_withdraw_altruism <- glm(
+  FullWithdrawal ~ Endorse_HelpOthers_ContributeResearch,
+  data = SS1,
+  family = binomial
+)
+
+summary(uni_stopped_altruism)
+summary(uni_withdraw_altruism)
+
+# Odds Ratios + 95% CI
+exp(cbind(OR = coef(uni_stopped_altruism), confint(uni_stopped_altruism)))
+exp(cbind(OR = coef(uni_withdraw_altruism), confint(uni_withdraw_altruism)))
+
+#---------------------------------------------------------------
+# MULTIVARIATE MODELS: Adjust Age, Sex, MND Subtype
+#---------------------------------------------------------------
+multi_stopped_altruism <- glm(
+  StoppedIMP ~ Endorse_HelpOthers_ContributeResearch + Age + factor(SexAtBirth) + ALS_0 + factor(AllocatedDrug),
+  data = SS1,
+  family = binomial
+)
+
+multi_withdraw_altruism <- glm(
+  FullWithdrawal ~ Endorse_HelpOthers_ContributeResearch + Age + factor(SexAtBirth) + ALS_0 + factor(AllocatedDrug),
+  data = SS1,
+  family = binomial
+)
+
+summary(multi_stopped_both)
+summary(multi_withdraw_both)
+
+# Odds Ratios + 95% CI
+exp(cbind(OR = coef(multi_stopped_both), confint(multi_stopped_both)))
+exp(cbind(OR = coef(multi_withdraw_both), confint(multi_withdraw_both)))
+
+#Forest Plot
+extract_for_forest <- function(model, model_name, term_labels = NULL) {
+  out <- tidy(model, conf.int = TRUE, exponentiate = TRUE) %>%
+    filter(term != "(Intercept)") %>%
+    mutate(
+      Model   = model_name,
+      p_label = ifelse(p.value < 0.001, "<0.001", sprintf("%.3f", p.value))
+    )
+  if (!is.null(term_labels)) {
+    out <- out %>%
+      mutate(term = dplyr::recode(term, !!!term_labels))
+  }
+  out
+}
+
+plot_forest <- function(df, title) {
+  ggplot(df,
+         aes(x = estimate, y = fct_rev(term), color = Model)) +
+    geom_point(position = position_dodge(width = 0.6), size = 3) +
+    geom_errorbarh(aes(xmin = conf.low, xmax = conf.high),
+                   position = position_dodge(width = 0.6), height = 0.2) +
+    geom_vline(xintercept = 1, linetype = "dashed") +
+    scale_x_log10() +
+    geom_text(
+      aes(label = paste0("p = ", p_label),
+          x = conf.high * 1.3),
+      position = position_dodge(width = 0.6),
+      size = 3.5,
+      hjust = 0
+    ) +
+    labs(
+      title = title,
+      x = "Odds Ratio (log scale)",
+      y = ""
+    ) +
+    theme_minimal(base_size = 14) +
+    theme(
+      legend.position = "bottom",
+      axis.text.y     = element_text(size = 12),
+      plot.title      = element_text(face = "bold", size = 16),
+      panel.grid.minor = element_blank()
+    ) +
+    coord_cartesian(clip = "off")
+}
+
+#-----------------------------------------------------------------------
+#Variable Group 6: Caregiver Support at Screening
+#-----------------------------------------------------------------------
+SS1_Caregiver <- SS1_Caregiver %>%
+  mutate(
+    Crr_Support_Decision = ifelse(SupportiveCrrExpctScrn == 1, 1L, 0L),
+    Crr_Joint_Decision = ifelse(JointDecisionCrrExpctScrn == 1, 1L, 0L),
+    Crr_Support_Joint = ifelse(Crr_Support_Decision == 1 & Crr_Joint_Decision == 1, 1L, 0L)
+  )
+
+table(SS1_Caregiver$Crr_Support_Joint)
+table(SS1_Caregiver$Crr_Support_Decision)
+table(SS1_Caregiver$Crr_Joint_Decision)
+#---------------------------------------------------------------
+# UNIVARIATE MODELS
+#---------------------------------------------------------------
+# Univariate models for stopping IMP and full withdrawal
+uni_stopped_Crr_Support <- glm(
+  StoppedIMP ~ Crr_Support_Joint,
+  data = SS1_Caregiver,
+  family = binomial
+)
+
+uni_withdraw_Crr_Support <- glm(
+  FullWithdrawal ~ Crr_Support_Joint,
+  data = SS1_Caregiver,
+  family = binomial
+)
+
+summary(uni_stopped_Crr_Support)
+summary(uni_withdraw_Crr_Support)
+
+# Odds Ratios + 95% CI
+exp(cbind(OR = coef(uni_stopped_Crr_Support), confint(uni_stopped_Crr_Support)))
+exp(cbind(OR = coef(uni_withdraw_Crr_Support), confint(uni_withdraw_Crr_Support)))
+
+#---------------------------------------------------------------
+# MULTIVARIATE MODELS: Adjust Age, Sex, MND Subtype
+#---------------------------------------------------------------
+SS1_Caregiver$ALS_0 <- suppressWarnings(as.numeric(SS1_Caregiver$ALS_0))
+summary(SS1_Caregiver$ALS_0)
+
+SS1_Caregiver <- SS1_Caregiver %>% 
+  mutate(AllocatedDrug = factor(AllocatedDrug, levels = c("3","1","2")))
+
+multi_stopped_Crr_Support <- glm(
+  StoppedIMP ~ Crr_Support_Joint + Age + factor(SexAtBirth) + ALS_0 + factor(AllocatedDrug),
+  data = SS1_Caregiver,
+  family = binomial
+)
+
+multi_withdraw_Crr_Support <- glm(
+  FullWithdrawal ~ Crr_Support_Joint + Age + factor(SexAtBirth) + ALS_0 + factor(AllocatedDrug),
+  data = SS1_Caregiver,
+  family = binomial
+)
+
+summary(multi_stopped_Crr_Support)
+summary(multi_withdraw_Crr_Support)
+
+# Odds Ratios + 95% CI
+exp(cbind(OR = coef(multi_stopped_Crr_Support), confint(multi_stopped_Crr_Support)))
+exp(cbind(OR = coef(multi_withdraw_Crr_Support), confint(multi_withdraw_Crr_Support)))
+
+#------------------------------------------------------------------------------
+# Variable Group 7: Caregiver burden
+#------------------------------------------------------------------------------
+SS1 <- SS1 %>%
+  mutate(
+    across(
+      c(CarerDateOfConsentSS1, DateTimeCompletedCrrFeedback6m,
+        DateTimeCompletedCrrFeedback2m),
+      ~ na_if(as.character(.x), "#NULL!")
+    ),
+    # if these include times (e.g., "12/09/2024 14:32"), use dmy_hms
+    CarerDateOfConsentSS1          = dmy(CarerDateOfConsentSS1),
+    DateTimeCompletedCrrFeedback6m = dmy(DateTimeCompletedCrrFeedback6m),
+    DateTimeCompletedCrrFeedback2m = dmy(DateTimeCompletedCrrFeedback2m)
+  )
+
+# 1. DEFINE WHOSE CAREGIVER BURDEN AT 6 MONTHS SHOULD BE INCLUDED
+SS1 <- SS1 %>%
+  mutate(
+    # Caregiver completed the 6-month form only if a date exists
+    Has6mCrrForm = !is.na(DateTimeCompletedCrrFeedback6m),
+    
+    # Exclusion criteria:
+    # - If they STOPPED before the caregiver 6m form date → exclude
+    Exclude_due_to_Stop = ifelse(
+      !is.na(DateofStoppingIMP) & !is.na(DateTimeCompletedCrrFeedback6m) &
+        DateofStoppingIMP < DateTimeCompletedCrrFeedback6m,
+      1, 0
+    ),
+    
+    # - If they WITHDREW before the caregiver 6m form date → exclude
+    Exclude_due_to_Withdraw = ifelse(
+      !is.na(DateofFullWithdrawal) & !is.na(DateTimeCompletedCrrFeedback6m) &
+        DateofFullWithdrawal < DateTimeCompletedCrrFeedback6m,
+      1, 0
+    ),
+    
+    # Final eligibility for burden-at-6m analysis:
+    Include6mBurden = ifelse(
+      Has6mCrrForm == TRUE &
+        Exclude_due_to_Stop == 0 &
+        Exclude_due_to_Withdraw == 0,
+      1, 0
+    )
+  )
+
+#------------------------------------------------------------------------------
+# 2. RECODE CAREGIVER BURDEN (6-month only)
+#------------------------------------------------------------------------------
+# 1 = Yes, 2/3/4 = No
+# (missing or excluded caregivers will be NA)
+SS1 <- SS1 %>%
+  mutate(
+    Crr_Burden_M6 = case_when(
+      Include6mBurden == 0 ~ NA_real_,
+      IncreasedBurdenCrrFeedback6m == 1 ~ 1,
+      IncreasedBurdenCrrFeedback6m %in% c(2, 3, 4) ~ 0,
+      TRUE ~ NA_real_
+    )
+  )
+
+#------------------------------------------------------------------------------
+# 3. Univariate Model- Stopping IMP and Trial Withdraw
+#------------------------------------------------------------------------------
+SS1 <- SS1 %>%
+  mutate(
+    Crr_Burden_YesNo = Crr_Burden_M6   # 1 = increased burden at 6m, 0 = otherwise
+  )
+
+Crr_Burden <- SS1 %>%
+  filter(Include6mBurden == 1)
+
+table(Crr_Burden$Crr_Burden_M6)
+table(Crr_Burden$StoppedIMP)
+table(Crr_Burden$FullWithdrawal)
+
+Crr_Burden_M6_complete <- Crr_Burden %>%
+  filter(!is.na(Crr_Burden_M6), !is.na(StoppedIMP)) %>% 
+  filter(!is.na(Crr_Burden_M6), !is.na(FullWithdrawal))
+
+uni_stopped_CrrBurden_M6 <- glm(
+  StoppedIMP ~ Crr_Burden_M6,
+  data = Crr_Burden_M6_complete,
+  family = binomial
+)
+summary(uni_stopped_CrrBurden_M6)
+exp(cbind(OR = coef(uni_stopped_CrrBurden_M6),
+          confint(uni_stopped_CrrBurden_M6)))
+
+uni_withdraw_CrrBurden_M6 <- glm(
+  FullWithdrawal ~ Crr_Burden_M6,
+  data = Crr_Burden_M6_complete,
+  family = binomial
+)
+summary(uni_withdraw_CrrBurden_M6)
+exp(cbind(OR = coef(uni_withdraw_CrrBurden_M6),
+          confint(uni_withdraw_CrrBurden_M6)))
+
+
+table_stopped <- table(Crr_Burden$Crr_Burden_M6, Crr_Burden$StoppedIMP)
+table_withdraw <- table(Crr_Burden$Crr_Burden_M6, Crr_Burden$FullWithdrawal)
+
+table_stopped
+table_withdraw
+
+fisher_stopped <- fisher.test(table_stopped)
+fisher_withdraw <- fisher.test(table_withdraw)
+
+fisher_stopped
+fisher_withdraw
+
+#------------------------------
+# Month 2 Caregiver Burden
+#------------------------------
+SS1 <- SS1 %>%
+  mutate(
+    # Caregiver completed the 6-month form only if a date exists
+    Has2mCrrForm = !is.na(DateTimeCompletedCrrFeedback2m),
+    
+    # Exclusion criteria:
+    # - If they STOPPED before the caregiver 6m form date → exclude
+    Exclude_due_to_Stop_M2 = ifelse(
+      !is.na(DateofStoppingIMP) & !is.na(DateTimeCompletedCrrFeedback2m) &
+        DateofStoppingIMP < DateTimeCompletedCrrFeedback2m,
+      1, 0
+    ),
+    
+    # - If they WITHDREW before the caregiver 6m form date → exclude
+    Exclude_due_to_Withdraw_M2 = ifelse(
+      !is.na(DateofFullWithdrawal) & !is.na(DateTimeCompletedCrrFeedback2m) &
+        DateofFullWithdrawal < DateTimeCompletedCrrFeedback2m,
+      1, 0
+    ),
+    
+    # Final eligibility for burden-at-6m analysis:
+    Include2mBurden = ifelse(
+      Has2mCrrForm == TRUE &
+        Exclude_due_to_Stop_M2 == 0 &
+        Exclude_due_to_Withdraw_M2 == 0,
+      1, 0
+    )
+  )
+
+SS1 <- SS1 %>%
+  mutate(
+    Crr_Burden_M2 = case_when(
+      Include2mBurden == 0 ~ NA_real_,
+      IncreasedBurdenCrrFeedback2m == 1 ~ 1,
+      IncreasedBurdenCrrFeedback2m %in% c(2, 3, 4) ~ 0,
+      TRUE ~ NA_real_
+    )
+  )
+
+SS1 <- SS1 %>%
+  mutate(
+    Crr_Burden_YesNo_M2 = Crr_Burden_M2   # 1 = increased burden at 6m, 0 = otherwise
+  )
+
+Crr_Burden_M2 <- SS1 %>%
+  filter(Include2mBurden == 1) %>%
+  filter(!is.na(Crr_Burden_M2), !is.na(StoppedIMP)) %>% 
+  filter(!is.na(Crr_Burden_M2), !is.na(FullWithdrawal))
+
+#Month 2 Caregiver Burden Checks
+table(Crr_Burden_M2$Crr_Burden_M2)
+table(Crr_Burden_M2$StoppedIMP)
+table(Crr_Burden_M2$FullWithdrawal)
+#---------------------
+#Univariate Model
+#---------------------
+#Stopped IMP and Caregiver Burden at Month 2
+uni_stopped_CrrBurden_M2 <- glm(
+  StoppedIMP ~ Crr_Burden_M2,
+  data = Crr_Burden_M2,
+  family = binomial
+)
+summary(uni_stopped_CrrBurden_M2)
+exp(cbind(OR = coef(uni_stopped_CrrBurden_M2),
+          confint(uni_stopped_CrrBurden_M2)))
+
+#Withdraw and Caregiver Burden at Month 2
+uni_withdraw_CrrBurden_M2 <- glm(
+  FullWithdrawal ~ Crr_Burden_M2,
+  data = Crr_Burden_M2,
+  family = binomial
+)
+summary(uni_withdraw_CrrBurden_M2)
+exp(cbind(OR = coef(uni_withdraw_CrrBurden_M2),
+          confint(uni_withdraw_CrrBurden_M2)))
+
+#----------------------
+#Multivariable Model
+#----------------------
+Crr_Burden_M2 <- Crr_Burden_M2 %>% 
+  mutate(AllocatedDrug = factor(AllocatedDrug, levels = c("3","1","2")))
+
+
+
+#Stopped IMP and Caregiver Burden at Month 2
+multi_stopped_CrrBurden_M2 <- glm(
+  StoppedIMP ~ Crr_Burden_M2 + Age + factor(SexAtBirth) + ALS_2 + factor(AllocatedDrug),
+  data = Crr_Burden_M2,
+  family = binomial
+)
+summary(multi_stopped_CrrBurden_M2)
+exp(cbind(OR = coef(multi_stopped_CrrBurden_M2),
+          confint(multi_stopped_CrrBurden_M2)))
+
+#Withdraw and Caregiver Burden at Month 2
+multi_withdraw_CrrBurden_M2 <- glm(
+  FullWithdrawal ~ Crr_Burden_M2 + Age + factor(SexAtBirth) + ALS_2 + factor(AllocatedDrug),
+  data = Crr_Burden_M2,
+  family = binomial
+)
+summary(multi_withdraw_CrrBurden_M2)
+exp(cbind(OR = coef(multi_withdraw_CrrBurden_M2),
+          confint(multi_withdraw_CrrBurden_M2)))
+
+
+#----------------------------------------------------------------------------------------------------------
+# Variable Group 8: Side Effects (experience of adverse events and not expecting prior to trial enrolment)
+#----------------------------------------------------------------------------------------------------------
+#----------------------------------
+#Month 2- Combined Variable
+#----------------------------------
+Eligible_M2 <- Eligible_M2 %>%
+  mutate(
+    SE_Exp_M2 = if_else(ExpSideEffectsPrtFeedback2m == 1, 1L, 0L), #yes
+    SE_NotAware_M2 = if_else(AwareExpSideEffectsPrtFeedback2m == 2, 1L, 0L), #no
+    SE_ConsiderStop_M2 = if_else(ConsiderStopDrugPrtFeedback2m == 1, 1L, 0L), #yes
+    
+    SE_Concern_Combined = if_else(
+      SE_Exp_M2 == 1 &
+        SE_NotAware_M2 == 1 &
+        SE_ConsiderStop_M2 == 1,
+      1L, 0L
+    )
+  )
+Eligible_M2 <- Eligible_M2 %>%
+  mutate(AllocatedDrug = factor(AllocatedDrug, levels = c("3","1","2")))
+
+table(Eligible_M2$SE_Concern_Combined, useNA = "ifany")
+table(Eligible_M2$StoppedIMP)
+table(Eligible_M2$FullWithdrawal)
+
+table(Eligible_M2$ExpSideEffectsPrtFeedback2m)
+table(Eligible_M2$AwareExpSideEffectsPrtFeedback2m)
+table(Eligible_M6$ConsiderStopDrugPrtFeedback2m)
+
+#Stopping IMP
+uni_stopped_SideEffects_M2 <- glm(
+  StoppedIMP ~ SE_Concern_Combined,
+  data = Eligible_M2,
+  family = binomial
+)
+summary(uni_stopped_SideEffects_M2)
+exp(cbind(OR = coef(uni_stopped_SideEffects_M2),
+          confint(uni_stopped_SideEffects_M2)))
+
+multi_stopped_SideEffects_M2 <- glm(
+  StoppedIMP ~ SE_Concern_Combined + Age + factor(SexAtBirth) + ALS_2 + factor(AllocatedDrug),
+  data = Eligible_M2,
+  family = binomial
+)
+summary(multi_stopped_SideEffects_M2)
+exp(cbind(OR = coef(multi_stopped_SideEffects_M2),
+          confint(multi_stopped_SideEffects_M2)))
+
+#Trial Withdraw
+uni_withdraw_SideEffects_M2 <- glm(
+  FullWithdrawal ~ SE_Concern_Combined,
+  data = Eligible_M2,
+  family = binomial
+)
+summary(uni_withdraw_SideEffects_M2)
+exp(cbind(OR = coef(uni_withdraw_SideEffects_M2),
+          confint(uni_withdraw_SideEffects_M2)))
+
+multi_withdraw_SideEffects_M2 <- glm(
+  FullWithdrawal ~ SE_Concern_Combined + Age + factor(SexAtBirth) + ALS_2 + factor(AllocatedDrug),
+  data = Eligible_M2,
+  family = binomial
+)
+summary(multi_withdraw_SideEffects_M2)
+exp(cbind(OR = coef(multi_withdraw_SideEffects_M2),
+          confint(multi_withdraw_SideEffects_M2)))
+
+#------------------------------
+##Month 2- Separate Variables
+#------------------------------
+Eligible_M2 <- Eligible_M2 %>%
+  mutate(
+    SE_Exp_M2 = if_else(ExpSideEffectsPrtFeedback2m == 1, 1L, 0L),
+    SE_NotAware_M2 = if_else(AwareExpSideEffectsPrtFeedback2m == 2, 1L, 0L),
+    SE_ConsiderStop_M2 = if_else(ConsiderStopDrugPrtFeedback2m == 1, 1L, 0L)
+  )
+
+table(Eligible_M2$ExpSideEffectsPrtFeedback2m)
+table(Eligible_M2$AwareExpSideEffectsPrtFeedback2m)
+table(Eligible_M2$ConsiderStopDrugPrtFeedback2m)
+
+uni_stop_exp_M2 <- glm(
+  StoppedIMP ~ SE_Exp_M2,
+  data = Eligible_M2,
+  family = binomial
+)
+
+uni_stop_Notaware_M2 <- glm(
+  StoppedIMP ~ SE_NotAware_M2,
+  data = Eligible_M2,
+  family= binomial
+)
+
+uni_stop_consider_M2 <- glm(
+  StoppedIMP ~ SE_ConsiderStop_M2,
+  data = Eligible_M2,
+  family = binomial
+)
+
+summary(uni_stop_exp_M2)
+summary(uni_stop_Notaware_M2)
+summary(uni_stop_consider_M2)
+
+exp(cbind(OR = coef(uni_stop_exp_M2), confint(uni_stop_exp_M2)))
+exp(cbind(OR = coef(uni_stop_Notaware_M2), confint(uni_stop_Notaware_M2)))
+exp(cbind(OR = coef(uni_stop_consider_M2), confint(uni_stop_consider_M2)))
+
+###Withdraw
+uni_withdraw_exp_M2 <- glm(
+  FullWithdrawal ~ SE_Exp_M2,
+  data = Eligible_M2,
+  family = binomial
+)
+
+uni_withdraw_Notaware_M2 <- glm(
+  FullWithdrawal ~ SE_NotAware_M2,
+  data = Eligible_M2,
+  family= binomial
+)
+
+uni_withdraw_consider_M2 <- glm(
+  FullWithdrawal ~ SE_ConsiderStop_M2,
+  data = Eligible_M2,
+  family = binomial
+)
+
+summary(uni_withdraw_exp_M2)
+summary(uni_withdraw_Notaware_M2)
+summary(uni_withdraw_consider_M2)
+
+exp(cbind(OR = coef(uni_withdraw_exp_M2), confint(uni_withdraw_exp_M2)))
+exp(cbind(OR = coef(uni_withdraw_Notaware_M2), confint(uni_withdraw_Notaware_M2)))
+exp(cbind(OR = coef(uni_withdraw_consider_M2), confint(uni_withdraw_consider_M2)))
+
+#Multivariate Model (Age, Sex)
+###Stopped IMP
+Eligible_M2 <- Eligible_M2 %>% 
+  mutate(AllocatedDrug, levels = c("3", ))
+
+multi_stopped_SE_Exp_M2 <- glm(
+  StoppedIMP ~ SE_Exp_M2 + Age + factor(SexAtBirth) + ALS_2 + factor(AllocatedDrug), 
+  data = Eligible_M2,
+  family = binomial
+)
+
+multi_stopped_SE_Aware_M2 <- glm(
+  StoppedIMP ~ SE_NotAware_M2 + Age + factor(SexAtBirth) + ALS_2 + factor(AllocatedDrug), 
+  data = Eligible_M2,
+  family = binomial
+)
+
+multi_stopped_SE_Consider_M2 <- glm(
+  StoppedIMP ~ SE_ConsiderStop_M2 + Age + factor(SexAtBirth) + ALS_2 + factor(AllocatedDrug),
+  data = Eligible_M2,
+  family = binomial
+)
+
+summary(multi_stopped_SE_Exp_M2)
+summary(multi_stopped_SE_Aware_M2)
+summary(multi_stopped_SE_Consider_M2)
+
+exp(cbind(OR = coef(multi_stopped_SE_Exp_M2), confint(multi_stopped_SE_Exp_M2)))
+exp(cbind(OR = coef(multi_stopped_SE_Aware_M2), confint(multi_stopped_SE_Aware_M2)))
+exp(cbind(OR = coef(multi_stopped_SE_Consider_M2), confint(multi_stopped_SE_Consider_M2)))
+
+
+###Withdraw
+multi_withdraw_SE_Exp_M2 <- glm(
+  FullWithdrawal ~ SE_Exp_M2 + Age + factor(SexAtBirth) + ALS_2 + factor(AllocatedDrug),
+  data = Eligible_M2,
+  family = binomial
+)
+
+multi_withdraw_SE_Notaware_M2 <- glm(
+  FullWithdrawal ~ SE_NotAware_M2 + Age + factor(SexAtBirth) + ALS_2 + factor(AllocatedDrug),
+  data = Eligible_M2,
+  family = binomial
+)
+
+multi_withdraw_SE_Consider_M2 <- glm(
+  FullWithdrawal ~ SE_ConsiderStop_M2 + Age + factor(SexAtBirth) + ALS_2 + factor(AllocatedDrug),
+  data = Eligible_M2,
+  family = binomial
+)
+
+summary(multi_withdraw_SE_Exp_M2)
+summary(multi_withdraw_SE_Notaware_M2)
+summary(multi_withdraw_SE_Consider_M2)
+
+exp(cbind(OR = coef(multi_withdraw_SE_Exp_M2), confint(multi_withdraw_SE_Exp_M2)))
+exp(cbind(OR = coef(multi_withdraw_SE_Notaware_M2), confint(multi_withdraw_SE_Notaware_M2)))
+exp(cbind(OR = coef(multi_withdraw_SE_Consider_M2), confint(multi_withdraw_SE_Consider_M2)))
+
+
+#----------------------
+#Month 6
+#----------------------
+#------------------------------------------------------------
+# 3. CREATE SIDE-EFFECT EXPOSURE VARIABLES
+#------------------------------------------------------------
+Eligible_M6 <- Eligible_M6 %>%
+  mutate(
+    SE_Exp_M6 = if_else(ExpSideEffectsPrtFeedback6m == 1, 1L, 0L), #yes
+    SE_NotAware_M6 = if_else(AwareExpSideEffectsPrtFeedback6m == 2, 1L, 0L), #no
+    SE_ConsiderStop_M6 = if_else(ConsiderStopDrugPrtFeedback6m == 1, 1L, 0L), #yes
+    
+    SE_Concern_Combined = if_else(
+      SE_Exp_M6 == 1 &
+        SE_NotAware_M6 == 1 &
+        SE_ConsiderStop_M6 == 1,
+      1L, 0L
+    )
+  )
+
+table(Eligible_M6$SE_Concern_Combined, useNA = "ifany")
+table(Eligible_M6$StoppedIMP)
+table(Eligible_M6$FullWithdrawal)
+#------------------------------------------------------------
+# 4. UNIVARIATE MODELS (using correct temporal outcomes)
+#------------------------------------------------------------
+## Stopping IMP Before Month 6
+uni_stopped_SideEffects <- glm(
+  StoppedIMP ~ SE_Concern_Combined,
+  data = Eligible_M6,
+  family = binomial
+)
+summary(uni_stopped_SideEffects)
+exp(cbind(OR = coef(uni_stopped_SideEffects),
+          confint(uni_stopped_SideEffects)))
+
+## Full Withdrawal AFTER Month 6
+uni_withdraw_SideEffects <- glm(
+  Withdraw_afterM6 ~ SE_Concern_Combined,
+  data = Eligible_M6,
+  family = binomial
+)
+summary(uni_withdraw_SideEffects)
+exp(cbind(OR = coef(uni_withdraw_SideEffects),
+          confint(uni_withdraw_SideEffects)))
+
+#------------------------------------------------------------
+# 5. MULTIVARIATE MODELS (adjusted for Age, Sex, Limb onset and Bulbar onset)
+#------------------------------------------------------------
+
+## Stopping IMP after Month 6
+multi_stopped_SideEffects <- glm(
+  StoppedIMP_afterM6 ~ SE_Concern_Combined + Age + factor(SexAtBirth) + ALS_0 + LimbOnset + BulbarOnset,
+  data = SS1,
+  family = binomial
+)
+summary(multi_stopped_SideEffects)
+exp(cbind(OR = coef(multi_stopped_SideEffects),
+          confint(multi_stopped_SideEffects)))
+
+## Full withdrawal after Month 6
+multi_withdraw_SideEffects <- glm(
+  Withdraw_afterM6 ~ SE_Concern_Combined + Age + factor(SexAtBirth) + ALS_0 + LimbOnset + BulbarOnset,
+  data = SS1,
+  family = binomial
+)
+summary(multi_withdraw_SideEffects)
+exp(cbind(OR = coef(multi_withdraw_SideEffects),
+          confint(multi_withdraw_SideEffects)))
+#----------------------
+##Separate Variables
+#----------------------
+Eligible_M6 <- Eligible_M6 %>%
+  mutate(
+    SE_Exp_M6 = if_else(ExpSideEffectsPrtFeedback6m == 1, 1L, 0L),
+    SE_NotAware_M6 = if_else(AwareExpSideEffectsPrtFeedback6m == 2, 1L, 0L),
+    SE_ConsiderStop_M6 = if_else(ConsiderStopDrugPrtFeedback6m == 1, 1L, 0L)
+  )
+
+table(Eligible_M6$SE_Exp_M6)
+table(SS1$SE_Exp_M6)
+
+table(Eligible_M6$SE_NotAware_M6)
+table(Eligible_M6$SE_ConsiderStop_M6)
+
+###Univariate Model
+####Stopping IMP
+###Experienced Side Effects at Month 6 
+uni_stop_exp <- glm(
+  StoppedIMP ~ SE_Exp_M6,
+  data = Eligible_M6,
+  family = binomial
+)
+
+uni_stop_Notaware <- glm(
+  StoppedIMP ~ SE_NotAware_M6,
+  data = Eligible_M6,
+  family= binomial
+)
+
+uni_stop_consider <- glm(
+  StoppedIMP ~ SE_ConsiderStop_M6,
+  data = Eligible_M6,
+  family = binomial
+)
+
+summary(uni_stop_exp)
+summary(uni_stop_Notaware)
+summary(uni_stop_consider)
+
+exp(cbind(OR = coef(uni_stop_exp), confint(uni_stop_exp)))
+exp(cbind(OR = coef(uni_stop_Notaware), confint(uni_stop_Notaware)))
+exp(cbind(OR = coef(uni_stop_consider), confint(uni_stop_consider)))
+
+
+###Withdraw
+uni_withdraw_exp <- glm(
+  FullWithdrawal ~ SE_Exp_M6,
+  data = Eligible_M6,
+  family = binomial
+)
+
+uni_withdraw_Notaware <- glm(
+  FullWithdrawal ~ SE_NotAware_M6,
+  data = Eligible_M6,
+  family= binomial
+)
+
+uni_withdraw_consider <- glm(
+  FullWithdrawal ~ SE_ConsiderStop_M6,
+  data = Eligible_M6,
+  family = binomial
+)
+
+summary(uni_withdraw_exp)
+summary(uni_withdraw_Notaware)
+summary(uni_withdraw_consider)
+
+exp(cbind(OR = coef(uni_withdraw_exp), confint(uni_withdraw_exp)))
+exp(cbind(OR = coef(uni_withdraw_Notaware), confint(uni_withdraw_Notaware)))
+exp(cbind(OR = coef(uni_withdraw_consider), confint(uni_withdraw_consider)))
+
+#Multivariate Model (Age, Sex)
+###Stopped IMP
+multi_stopped_SE_Exp <- glm(
+  StoppedIMP ~ SE_Exp_M6 + Age + factor(SexAtBirth) + ALS_6 + factor(AllocatedDrug), 
+  data = Eligible_M6,
+  family = binomial
+)
+
+multi_stopped_SE_Aware <- glm(
+  StoppedIMP ~ SE_NotAware_M6 + Age + factor(SexAtBirth) + ALS_6 + factor(AllocatedDrug), 
+  data = Eligible_M6,
+  family = binomial
+)
+
+multi_stopped_SE_Consider <- glm(
+  StoppedIMP ~ SE_ConsiderStop_M6 + Age + factor(SexAtBirth) + ALS_6 + factor(AllocatedDrug),
+  data = Eligible_M6,
+  family = binomial
+)
+
+summary(multi_stopped_SE_Exp)
+summary(multi_stopped_SE_Aware)
+summary(multi_stopped_SE_Consider)
+
+exp(cbind(OR = coef(multi_stopped_SE_Exp), confint(multi_stopped_SE_Exp)))
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             exp(cbind(OR = coef(multi_stopped_SE_Aware), confint(multi_stopped_SE_Aware)))
+exp(cbind(OR = coef(multi_stopped_SE_Consider), confint(multi_stopped_SE_Consider)))
+
+
+###Withdraw
+multi_withdraw_SE_Exp <- glm(
+  FullWithdrawal ~ SE_Exp_M6 + Age + factor(SexAtBirth) + ALS_6 + factor(AllocatedDrug),
+  data = Eligible_M6,
+  family = binomial
+)
+
+multi_withdraw_SE_Notaware <- glm(
+  FullWithdrawal ~ SE_NotAware_M6 + Age + factor(SexAtBirth) + ALS_6 + factor(AllocatedDrug),
+  data = Eligible_M6,
+  family = binomial
+)
+
+multi_withdraw_SE_Consider <- glm(
+  FullWithdrawal ~ SE_ConsiderStop_M6 + Age + factor(SexAtBirth) + ALS_6 + factor(AllocatedDrug),
+  data = Eligible_M6,
+  family = binomial
+)
+
+summary(multi_withdraw_SE_Exp)
+summary(multi_withdraw_SE_Notaware)
+summary(multi_withdraw_SE_Consider)
+
+exp(cbind(OR = coef(multi_withdraw_SE_Exp), confint(multi_withdraw_SE_Exp)))
+exp(cbind(OR = coef(multi_withdraw_SE_Notaware), confint(multi_withdraw_SE_Notaware)))
+exp(cbind(OR = coef(multi_withdraw_SE_Consider), confint(multi_withdraw_SE_Consider)))
+
+#--------------------------------------------------------------------
+# Variable Group 9: Satisfaction with trial participation at Month 6
+#--------------------------------------------------------------------
+SS1$OverallExperience      <- SS1$OverallExperiencePrtFeedback6m
+SS1$InfoLeaflet           <- SS1$InfoLeafletPrtFeedback6m
+SS1$LevelOfContact        <- SS1$LevelOfContactPrtFeedback6m
+SS1$DrugDeliverHome       <- SS1$DrugDeliverHomePrtFeedback6m
+SS1$EaseOfTakingDrug      <- SS1$EaseOfTakingDrugPrtFeedback6m
+SS1$DrugLiquidForm        <- SS1$DrugLiquidFormPrtFeedback6m
+SS1$LengthAppnts          <- SS1$LengthAppntsPrtFeedback6m
+SS1$RemoteAppnts          <- SS1$RemoteAppntsPrtFeedback6m
+SS1$AssessmentsTests      <- SS1$AssessmentsTestsPrtFeedback6m
+SS1$ParticAsExpected      <- SS1$ParticAsExpectedPrtFeedback6m
+SS1$EnjoyedPartic         <- SS1$EnjoyedParticPrtFeedback6m
+SS1$KeepPartic            <- SS1$KeepParticPrtFeedback6m
+
+recode_yes <- function(x) ifelse(x == 1, 1, 0)
+
+SS1$OverallExperience_Y <- recode_yes(SS1$OverallExperience)
+SS1$InfoLeaflet_Y <- recode_yes(SS1$InfoLeaflet)
+SS1$LevelOfContact_Y <- recode_yes(SS1$LevelOfContact)
+SS1$DrugDeliverHome_Y <- recode_yes(SS1$DrugDeliverHome)
+SS1$EaseOfTakingDrug_Y <- recode_yes(SS1$EaseOfTakingDrug)
+SS1$DrugLiquidForm_Y <- recode_yes(SS1$DrugLiquidForm)
+SS1$LengthAppnts_Y <- recode_yes(SS1$LengthAppnts)
+SS1$RemoteAppnts_Y <- recode_yes(SS1$RemoteAppnts)
+SS1$AssessmentsTests_Y <- recode_yes(SS1$AssessmentsTests)
+SS1$ParticAsExpected_Y <- recode_yes(SS1$ParticAsExpected)
+SS1$EnjoyedPartic_Y <- recode_yes(SS1$EnjoyedPartic)
+SS1$KeepPartic_Y <- recode_yes(SS1$KeepPartic)
+
+
+SS1$Satisfaction_Total <- rowSums(SS1[, c(
+  "OverallExperience_Y","InfoLeaflet_Y","LevelOfContact_Y","DrugDeliverHome_Y",
+  "EaseOfTakingDrug_Y","DrugLiquidForm_Y","LengthAppnts_Y","RemoteAppnts_Y",
+  "AssessmentsTests_Y","ParticAsExpected_Y",
+  "EnjoyedPartic_Y","KeepPartic_Y"
+)], na.rm = TRUE)
+
+Eligible_M6 <- SS1 %>%
+  filter(StoppedBeforeM6 == 0 & WithdrawnBeforeM6 == 0)
+
+Eligible_M6 <- Eligible_M6 %>%
+  filter(rowSums(is.na(select(., OverallExperience_Y:KeepPartic_Y))) <
+           ncol(select(., OverallExperience_Y:KeepPartic_Y)))
+
+#Univariate
+uni_stopped_sat <- glm(StoppedIMP ~ Satisfaction_Total, data = Eligible_M6, family = binomial)
+uni_withdraw_sat <- glm(FullWithdrawal ~ Satisfaction_Total, data = Eligible_M6, family = binomial)
+
+summary(uni_stopped_sat)
+summary(uni_withdraw_sat)
+
+exp(cbind(OR = coef(uni_stopped_sat), confint(uni_stopped_sat)))
+exp(cbind(OR = coef(uni_withdraw_sat), confint(uni_withdraw_sat)))
+
+#Multivariate
+multi_stopped_sat <- glm(
+  StoppedIMP ~ Satisfaction_Total + Age + factor(SexAtBirth) + ALS_6 +  factor(AllocatedDrug),
+  data = Eligible_M6, family = binomial
+)
+
+multi_withdraw_sat <- glm(
+  FullWithdrawal ~ Satisfaction_Total + Age + factor(SexAtBirth) + ALS_6 + factor(AllocatedDrug),
+  data = Eligible_M6, family = binomial
+)
+
+summary(multi_stopped_sat)
+summary(multi_withdraw_sat)
+
+exp(cbind(OR = coef(multi_stopped_sat), confint(multi_stopped_sat)))
+exp(cbind(OR = coef(multi_withdraw_sat), confint(multi_withdraw_sat)))
+
+#------------------------------------------------------------
+# Variable Group 10 (new): Participant–Caregiver disagreement at screening
+# Outcomes: StoppedIMP, FullWithdrawal
+# Population: SS1 only + caregiver consented (CarerConsentSS1==1)
+# Only include dyads with BOTH responses present for each question analysed
+#------------------------------------------------------------
+library(dplyr)
+library(tidyr)
+library(broom)
+
+#---------------------------
+# 0) Define dyad population
+#---------------------------
+Dyads <- TraMemPlaArms %>%
+  filter(ConsentSS1 == 1, CarerConsentSS1 == 1)
+
+#---------------------------------------
+# 1) Helper: clean screening responses
+#    1=Yes, 2=No, 3=Unsure, 4=Prefer not to say
+#    Treat 4 (and anything outside 1:3) as missing for analyses
+#---------------------------------------
+clean_scrn_resp <- function(x) {
+  x <- suppressWarnings(as.integer(as.character(x)))
+  dplyr::if_else(x %in% 1:3, x, NA_integer_)
+}
+
+#--------------------------------------------------------------
+#Screening
+# 2) Create paired variables + disagreement flags (item-level)
+#--------------------------------------------------------------
+Dyads <- Dyads %>%
+  mutate(
+    # Cleaned participant responses
+    prt_time   = clean_scrn_resp(TimeCommitmentPrtExpctScrn),
+    prt_pos    = clean_scrn_resp(PositiveEffectPrtExpctScrn),
+    prt_se     = clean_scrn_resp(SideEffectsPrtExpctScrn),
+    prt_dist   = clean_scrn_resp(DistanceToClinicPrtExpctScrn),
+    
+    # Cleaned caregiver responses
+    crr_time   = clean_scrn_resp(TimeCommitmentCrrExpctScrn),
+    crr_pos    = clean_scrn_resp(PositiveEffectCrrExpctScrn),
+    crr_se     = clean_scrn_resp(SideEffectsCrrExpctScrn),
+    crr_dist   = clean_scrn_resp(DistanceToClinicCrrExpctScrn),
+    
+    # Disagreement flags: defined ONLY when both responses present
+    dis_time = if_else(!is.na(prt_time) & !is.na(crr_time) & prt_time != crr_time, 1L,
+                       if_else(!is.na(prt_time) & !is.na(crr_time), 0L, NA_integer_)),
+    dis_pos  = if_else(!is.na(prt_pos)  & !is.na(crr_pos)  & prt_pos  != crr_pos,  1L,
+                       if_else(!is.na(prt_pos)  & !is.na(crr_pos),  0L, NA_integer_)),
+    dis_se   = if_else(!is.na(prt_se)   & !is.na(crr_se)   & prt_se   != crr_se,   1L,
+                       if_else(!is.na(prt_se)   & !is.na(crr_se),   0L, NA_integer_)),
+    dis_dist = if_else(!is.na(prt_dist) & !is.na(crr_dist) & prt_dist != crr_dist, 1L,
+                       if_else(!is.na(prt_dist) & !is.na(crr_dist), 0L, NA_integer_))
+  )
+
+#---------------------------------------
+# 3) Table: response distributions + paired disagreement
+#---------------------------------------
+# Participant and caregiver response % (among responders), plus paired N and disagreement %
+make_item_summary <- function(df, prt_var, crr_var, dis_var, item_label) {
+  
+  # Participant distribution among non-missing
+  prt_dist <- df %>%
+    filter(!is.na(.data[[prt_var]])) %>%
+    count(resp = .data[[prt_var]]) %>%
+    mutate(pct = 100 * n / sum(n),
+           who = "Participant")
+  
+  # Caregiver distribution among non-missing
+  crr_dist <- df %>%
+    filter(!is.na(.data[[crr_var]])) %>%
+    count(resp = .data[[crr_var]]) %>%
+    mutate(pct = 100 * n / sum(n),
+           who = "Caregiver")
+  
+  # Paired disagreement among complete dyads for that item
+  paired <- df %>%
+    filter(!is.na(.data[[dis_var]])) %>%
+    summarise(
+      paired_n = n(),
+      disagree_n = sum(.data[[dis_var]] == 1L),
+      disagree_pct = 100 * mean(.data[[dis_var]] == 1L)
+    ) %>%
+    mutate(item = item_label)
+  
+  list(prt_dist = prt_dist, crr_dist = crr_dist, paired = paired)
+}
+
+sum_time <- make_item_summary(Dyads, "prt_time", "crr_time", "dis_time", "Time commitment")
+sum_pos  <- make_item_summary(Dyads, "prt_pos",  "crr_pos",  "dis_pos",  "Positive effect")
+sum_se   <- make_item_summary(Dyads, "prt_se",   "crr_se",   "dis_se",   "Side effects")
+sum_dist <- make_item_summary(Dyads, "prt_dist", "crr_dist", "dis_dist", "Distance to clinic")
+
+paired_summary <- bind_rows(sum_time$paired, sum_pos$paired, sum_se$paired, sum_dist$paired)
+
+# Optional: a single table for participant/caregiver response distributions by item
+resp_dist_long <- bind_rows(
+  sum_time$prt_dist %>% mutate(item = "Time commitment"),
+  sum_time$crr_dist %>% mutate(item = "Time commitment"),
+  sum_pos$prt_dist  %>% mutate(item = "Positive effect"),
+  sum_pos$crr_dist  %>% mutate(item = "Positive effect"),
+  sum_se$prt_dist   %>% mutate(item = "Side effects"),
+  sum_se$crr_dist   %>% mutate(item = "Side effects"),
+  sum_dist$prt_dist %>% mutate(item = "Distance to clinic"),
+  sum_dist$crr_dist %>% mutate(item = "Distance to clinic")
+) %>%
+  mutate(resp = factor(resp, levels = 1:3, labels = c("Yes", "No", "Unsure"))) %>%
+  select(item, who, resp, n, pct)
+
+# Print summaries
+paired_summary
+resp_dist_long
+
+#---------------------------------------
+# 4) Regression: per-item disagreement vs StoppedIMP / FullWithdrawal
+#    Univariate + multivariable (Age, SexAtBirth, ALS_0, AllocatedDrug)
+#    IMPORTANT: each model uses ONLY dyads with non-missing disagreement for that item
+#---------------------------------------
+fit_models <- function(df, outcome, dis_var) {
+  
+  d <- df %>% filter(!is.na(.data[[dis_var]]), !is.na(.data[[outcome]]))
+  
+  uni <- glm(
+    as.formula(paste0(outcome, " ~ ", dis_var)),
+    data = d, family = binomial
+  )
+  
+  multi <- glm(
+    as.formula(paste0(outcome, " ~ ", dis_var,
+                      " + Age + factor(SexAtBirth) + ALS_0 + factor(AllocatedDrug)")),
+    data = d, family = binomial
+  )
+  
+  list(
+    n = nrow(d),
+    uni = uni,
+    multi = multi
+  )
+}
+
+# Stopped IMP
+m_stop_time <- fit_models(Dyads, "StoppedIMP", "dis_time")
+m_stop_pos  <- fit_models(Dyads, "StoppedIMP", "dis_pos")
+m_stop_se   <- fit_models(Dyads, "StoppedIMP", "dis_se")
+m_stop_dist <- fit_models(Dyads, "StoppedIMP", "dis_dist")
+
+# Full withdrawal
+m_wd_time <- fit_models(Dyads, "FullWithdrawal", "dis_time")
+m_wd_pos  <- fit_models(Dyads, "FullWithdrawal", "dis_pos")
+m_wd_se   <- fit_models(Dyads, "FullWithdrawal", "dis_se")
+m_wd_dist <- fit_models(Dyads, "FullWithdrawal", "dis_dist")
+
+#---------------------------------------
+# 5) Tidy OR tables (univariate & multivariable) for each item/outcome
+#---------------------------------------
+or_ci <- function(model, term) {
+  est <- coef(model)[term]
+  se  <- sqrt(vcov(model)[term, term])
+  tibble(
+    term = term,
+    OR = exp(est),
+    lo = exp(est - 1.96 * se),
+    hi = exp(est + 1.96 * se),
+    p = summary(model)$coefficients[term, "Pr(>|z|)"]
+  )
+}
+
+collect_results <- function(label, fit, dis_term) {
+  bind_rows(
+    or_ci(fit$uni, dis_term)   %>% mutate(model = "Univariate",   item = label, n = fit$n),
+    or_ci(fit$multi, dis_term) %>% mutate(model = "Multivariable", item = label, n = fit$n)
+  )
+}
+
+results_stop <- bind_rows(
+  collect_results("Time commitment", m_stop_time, "dis_time"),
+  collect_results("Positive effect", m_stop_pos,  "dis_pos"),
+  collect_results("Side effects",    m_stop_se,   "dis_se"),
+  collect_results("Distance to clinic", m_stop_dist, "dis_dist")
+)
+
+results_withdraw <- bind_rows(
+  collect_results("Time commitment", m_wd_time, "dis_time"),
+  collect_results("Positive effect", m_wd_pos,  "dis_pos"),
+  collect_results("Side effects",    m_wd_se,   "dis_se"),
+  collect_results("Distance to clinic", m_wd_dist, "dis_dist")
+)
+
+results_stop
+results_withdraw
+
+#---------------------------------------
+# 6) Optional: overall disagreement score (0–4) among dyads complete on all 4 items
+#---------------------------------------
+Dyads_all4 <- Dyads %>%
+  filter(!is.na(dis_time), !is.na(dis_pos), !is.na(dis_se), !is.na(dis_dist)) %>%
+  mutate(disagree_count = dis_time + dis_pos + dis_se + dis_dist)
+
+Dyads_all4$ALS_0 <- suppressWarnings(as.numeric(Dyads_all4$ALS_0))
+
+# Univariate + multivariable using the count as predictor
+glm(StoppedIMP ~ disagree_count, data = Dyads_all4, family = binomial) %>% summary()
+glm(FullWithdrawal ~ disagree_count, data = Dyads_all4, family = binomial) %>% summary()
+
+glm(StoppedIMP ~ disagree_count + Age + factor(SexAtBirth) + ALS_0 + factor(AllocatedDrug),
+    data = Dyads_all4, family = binomial) %>% summary()
+
+glm(FullWithdrawal ~ disagree_count + Age + factor(SexAtBirth) + ALS_0 + factor(AllocatedDrug),
+    data = Dyads_all4, family = binomial) %>% summary()
+
+
+
+
+
+#-------------------------------------------------------------------------------
+# Variable Group 11: ALS-FRS @ Baseline
+#-------------------------------------------------------------------------------
+#Univariate Model
+##Stopping IMP
+# Baseline ALSFRS-R and stopping IMP
+uni_stop_ALSFRS_Baseline <- glm(StoppedIMP ~ ALS_0, family = binomial, data = SS1)
+
+# Month 2 ALSFRS-R and stopping IMP
+uni_stop_ALSFRS_M2 <- glm(StoppedIMP ~ ALS_2, family = binomial, data = SS1)
+
+# Month 6 ALSFRS-R 
+uni_stop_ALSFRS_M6 <- glm(StoppedIMP ~ ALS_6, family = binomial, data = SS1)
+
+summary(uni_stop_ALSFRS_Baseline)
+summary(uni_stop_ALSFRS_M2)
+summary(uni_stop_ALSFRS_M6)
+
+exp(cbind(OR = coef(uni_stop_ALSFRS_Baseline), confint(uni_stop_ALSFRS_Baseline)))
+exp(cbind(OR = coef(uni_stop_ALSFRS_M2), confint(uni_stop_ALSFRS_M2)))
+exp(cbind(OR = coef(uni_stop_ALSFRS_M6), confint(uni_stop_ALSFRS_M6)))
+
+##Withdraw
+# Baseline ALSFRS-R and withdrawal
+uni_withdraw_ALSFRS_Baseline <- glm(FullWithdrawal ~ ALS_0, family = binomial, data = SS1)
+
+# Month 2 ALSFRS-R and withdrawal
+uni_withdraw_ALSFRS_M2 <- glm(FullWithdrawal ~ ALS_2, family = binomial, data = SS1)
+
+# Month 6 ALSFRS-R (with replacement)
+uni_withdraw_ALSFRS_M6 <- glm(FullWithdrawal ~ ALS_6, family = binomial, data = SS1)
+
+summary(uni_withdraw_ALSFRS_Baseline)
+summary(uni_withdraw_ALSFRS_M2)
+summary(uni_withdraw_ALSFRS_M6)
+
+exp(cbind(OR = coef(uni_withdraw_ALSFRS_Baseline), confint(uni_withdraw_ALSFRS_Baseline)))
+exp(cbind(OR = coef(uni_withdraw_ALSFRS_M2), confint(uni_withdraw_ALSFRS_M2)))
+exp(cbind(OR = coef(uni_withdraw_ALSFRS_M6), confint(uni_withdraw_ALSFRS_M6)))
+
+#Multivariate Model
+##Stopping IMP
+multi_stop_ALSFRS_Baseline <- glm(StoppedIMP ~ ALS_0 + Age + factor(SexAtBirth) + factor(AllocatedDrug),
+    family = binomial, data = SS1)
+
+multi_stop_ALSFRS_M2 <- glm(StoppedIMP ~ ALS_2 + Age + factor(SexAtBirth),
+    family = binomial, data = SS1)
+
+multi_stop_ALSFRS_M6 <- glm(StoppedIMP ~ ALS_6 + Age + factor(SexAtBirth),
+    family = binomial, data = SS1)
+
+summary(multi_stop_ALSFRS_Baseline)
+summary(multi_stop_ALSFRS_M2)
+summary(multi_stop_ALSFRS_M6)
+
+exp(cbind(OR = coef(multi_stop_ALSFRS_Baseline), confint(multi_stop_ALSFRS_Baseline)))
+exp(cbind(OR = coef(multi_stop_ALSFRS_M2), confint(multi_stop_ALSFRS_M2)))
+exp(cbind(OR = coef(multi_stop_ALSFRS_M6), confint(multi_stop_ALSFRS_M6)))
+
+##Withdraw
+multi_withdraw_ALSFRS_Baseline <- glm(FullWithdrawal ~ ALS_0 + Age + factor(SexAtBirth) + factor(AllocatedDrug),
+    family = binomial, data = SS1)
+
+multi_withdraw_ALSFRS_M2 <- glm(FullWithdrawal ~ ALS_2 + Age + factor(SexAtBirth) + factor(AllocatedDrug),
+    family = binomial, data = SS1)
+
+multi_withdraw_ALSFRS_M6 <- glm(FullWithdrawal ~ ALS_6 + Age + factor(SexAtBirth) + factor(AllocatedDrug),
+    family = binomial, data = SS1)
+
+summary(multi_withdraw_ALSFRS_Baseline)
+summary(multi_withdraw_ALSFRS_M2)
+summary(multi_withdraw_ALSFRS_M6)
+
+exp(cbind(OR = coef(multi_withdraw_ALSFRS_Baseline), confint(multi_withdraw_ALSFRS_Baseline)))
+exp(cbind(OR = coef(multi_withdraw_ALSFRS_M2), confint(multi_withdraw_ALSFRS_M2)))
+exp(cbind(OR = coef(multi_withdraw_ALSFRS_M6), confint(multi_withdraw_ALSFRS_M6)))
