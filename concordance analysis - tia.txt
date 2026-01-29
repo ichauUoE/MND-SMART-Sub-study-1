@@ -1,0 +1,430 @@
+install.packages("tidyverse")
+install.packages("lubridate")
+install.packages("broom")
+install.packages("janitor")
+#------------------------------------------------------------
+# Variable Group 10 (new): Participant–Caregiver disagreement at screening
+# Outcomes: StoppedIMP, FullWithdrawal
+# Population: SS1 only + caregiver consented (CarerConsentSS1==1)
+# Only include dyads with BOTH responses present for each question analysed
+#------------------------------------------------------------
+library(tidyverse)
+library(tidyr)
+library(purrr)
+library(tibble)
+library(ggplot2)
+library(broom)
+library(janitor)
+library(stringr)
+
+#Upload main dataset
+TraMemPlaArms <- read_csv("/content/MNDSMART_MaindatasetDS v2.csv")
+
+SS1 <- TraMemPlaArms %>%
+   filter(ConsentSS1 == 1)
+
+SS1 <- SS1 %>%
+  mutate(
+    DateOfConsentSS1   = dmy(na_if(as.character(DateOfConsentSS1),   "#NULL!")),
+    DateofStoppingIMP  = dmy(na_if(as.character(DateofStoppingIMP),  "#NULL!")),
+    DateofFullWithdrawal = dmy(na_if(as.character(DateofFullWithdrawal), "#NULL!"))
+  ) %>%
+  mutate(
+    Month2_Date = DateOfConsentSS1 %m+% months(2),
+    Month6_Date = DateOfConsentSS1 %m+% months(6),
+    StoppedBeforeM2 = if_else(!is.na(DateofStoppingIMP)   & DateofStoppingIMP  < Month2_Date, 1L, 0L),
+    WithdrawnBeforeM2 = if_else(!is.na(DateofFullWithdrawal) & DateofFullWithdrawal < Month2_Date, 1L, 0L),
+    StoppedBeforeM6 = if_else(!is.na(DateofStoppingIMP)   & DateofStoppingIMP  < Month6_Date, 1L, 0L),
+    WithdrawnBeforeM6 = if_else(!is.na(DateofFullWithdrawal) & DateofFullWithdrawal < Month6_Date, 1L, 0L)
+  )
+#------------------------------------------------------------
+# Variable Group 10 (new): Participant–Caregiver disagreement at screening
+# Outcomes: StoppedIMP, FullWithdrawal
+# Population: SS1 only + caregiver consented (CarerConsentSS1==1)
+# Only include dyads with BOTH responses present for each question analysed
+#------------------------------------------------------------
+library(dplyr)
+library(tidyr)
+library(broom)
+
+#---------------------------
+# 0) Define dyad population
+#---------------------------
+Dyads <- SS1 %>%
+  filter(ConsentSS1 == 1, CarerConsentSS1 == 1)
+
+#---------------------------------------
+# 1) Helper: clean screening responses
+#    1=Yes, 2=No, 3=Unsure, 4=Prefer not to say
+#    Treat 4 (and anything outside 1:3) as missing for analyses
+#---------------------------------------
+clean_resp_1to3 <- function(x) {
+  x <- suppressWarnings(as.integer(as.character(x)))
+  dplyr::if_else(x %in% 1:3, x, NA_integer_)
+}
+
+#--------------------------------------------------------------
+#Screening
+# 2) Create paired variables + disagreement flags (item-level)
+#--------------------------------------------------------------
+Dyads <- Dyads %>%
+  mutate(
+    # Cleaned participant responses
+    scrn_prt_time   = clean_resp_1to3(TimeCommitmentPrtExpctScrn),
+    scrn_prt_pos    = clean_resp_1to3(PositiveEffectPrtExpctScrn),
+    scrn_prt_se     = clean_resp_1to3(SideEffectsPrtExpctScrn),
+    scrn_prt_dist   = clean_resp_1to3(DistanceToClinicPrtExpctScrn),
+
+    # Cleaned caregiver responses
+    scrn_crr_time   = clean_resp_1to3(TimeCommitmentCrrExpctScrn),
+    scrn_crr_pos    = clean_resp_1to3(PositiveEffectCrrExpctScrn),
+    scrn_crr_se     = clean_resp_1to3(SideEffectsCrrExpctScrn),
+    scrn_crr_dist   = clean_resp_1to3(DistanceToClinicCrrExpctScrn),
+
+    # At least one paired screening response present
+    scrn_any_paired =
+      (!is.na(scrn_prt_time) & !is.na(scrn_crr_time)) |
+      (!is.na(scrn_prt_pos)  & !is.na(scrn_crr_pos))  |
+      (!is.na(scrn_prt_se)   & !is.na(scrn_crr_se))   |
+      (!is.na(scrn_prt_dist) & !is.na(scrn_crr_dist))
+  ) %>%
+  filter(scrn_any_paired)
+
+#------------------------------
+#3) Censor Month 2 and Month 6
+#------------------------------
+Dyads_M2 <- Dyads %>% filter(StoppedBeforeM2 == 0 & WithdrawnBeforeM2 == 0)
+Dyads_M6 <- Dyads %>% filter(StoppedBeforeM6 == 0 & WithdrawnBeforeM6 == 0)
+
+items_M2 <- tibble::tribble(
+  ~item,                 ~prt_col,                         ~crr_col,
+  "Time commitment",     "TimeCommitmentPrtFeedback2m",     "NegOtherActivitiesCrrFeedback2m",
+  "Drug effect expected","DrugEffectExpectedPrtFeedback2m", "DrugEffectExpectedCrrFeedback2m",
+  "Participation As expected",         "ParticAsExpectedPrtFeedback2m",   "ParticAsExpectedCrrFeedback2m",
+  "Enjoyed Participation", "EnjoyedParticPrtFeedback2m",      "EnjoyedInvolvementCrrFeedback2m",
+  "Plan to continue participating",  "KeepParticPrtFeedback2m",         "SupportiveCrrFeedback2m",
+  "Overall experience",  "OverallExperiencePrtFeedback2m",  "OverallExperienceCrrFeedback2m",
+  "Info leaflet",        "InfoLeafletPrtFeedback2m",        "InfoLeafletCrrFeedback2m",
+  "Level of contact",    "LevelOfContactPrtFeedback2m",     "LevelOfContactCrrFeedback2m",
+  "Drug delivered home", "DrugDeliverHomePrtFeedback2m",    "DrugDeliverHomeCrrFeedback2m",
+  "Ease of taking drug", "EaseOfTakingDrugPrtFeedback2m",   "EaseOfTakingDrugCrrFeedback2m",
+  "Liquid formulation",  "DrugLiquidFormPrtFeedback2m",     "DrugLiquidFormCrrFeedback2m",
+  "Length of appts",     "LengthAppntsPrtFeedback2m",       "LengthAppntsCrrFeedback2m",
+  "Remote appts",        "RemoteAppntsPrtFeedback2m",       "RemoteAppntsCrrFeedback2m",
+  "Assessments/tests",   "AssessmentsTestsPrtFeedback2m",   "AssessmentsTestsCrrFeedback2m"
+)
+
+items_M6 <- items_M2 %>%
+  mutate(
+    prt_col = gsub("2m$", "6m", prt_col),
+    crr_col = gsub("2m$", "6m", crr_col)
+  )
+
+#---------------------------------------
+# 4) Generic creator: cleaned prt/crr vars + disagreement flag (per item)
+#    Disagreement defined only when both present
+#---------------------------------------
+add_item_vars <- function(df, items_tbl, prefix = "") {
+
+  out <- df
+
+  for(i in seq_len(nrow(items_tbl))){
+
+    item  <- items_tbl$item[i]
+    pcol  <- items_tbl$prt_col[i]
+    ccol  <- items_tbl$crr_col[i]
+
+    # Safe syntactic names
+    stub <- paste0(prefix, gsub("[^A-Za-z0-9]+", "_", tolower(item)))
+
+    prt_var <- paste0("prt_", stub)
+    crr_var <- paste0("crr_", stub)
+    dis_var <- paste0("dis_", stub)
+
+    out <- out %>%
+      mutate(
+        !!prt_var := clean_resp_1to3(.data[[pcol]]),
+        !!crr_var := clean_resp_1to3(.data[[ccol]]),
+        !!dis_var := if_else(!is.na(.data[[prt_var]]) & !is.na(.data[[crr_var]]) &
+                               .data[[prt_var]] != .data[[crr_var]], 1L,
+                             if_else(!is.na(.data[[prt_var]]) & !is.na(.data[[crr_var]]), 0L, NA_integer_))
+      )
+  }
+
+  out
+}
+
+Dyads_M2 <- add_item_vars(Dyads_M2, items_M2, prefix = "m2_")
+Dyads_M6 <- add_item_vars(Dyads_M6, items_M6, prefix = "m6_")
+
+#---------------------------------------
+# 5) Table builder (harmonised to your screening version)
+#    Participant/caregiver response % (among responders),
+#    paired N and disagreement %
+#---------------------------------------
+make_item_summary <- function(df, prt_var, crr_var, dis_var, item_label) {
+
+  prt_dist <- df %>%
+    filter(!is.na(.data[[prt_var]])) %>%
+    count(resp = .data[[prt_var]]) %>%
+    mutate(pct = 100 * n / sum(n), who = "Participant")
+
+  crr_dist <- df %>%
+    filter(!is.na(.data[[crr_var]])) %>%
+    count(resp = .data[[crr_var]]) %>%
+    mutate(pct = 100 * n / sum(n), who = "Caregiver")
+
+  paired <- df %>%
+    filter(!is.na(.data[[dis_var]])) %>%
+    summarise(
+      paired_n = n(),
+      disagree_n = sum(.data[[dis_var]] == 1L),
+      disagree_pct = 100 * mean(.data[[dis_var]] == 1L)
+    ) %>%
+    mutate(item = item_label)
+
+  list(prt_dist = prt_dist, crr_dist = crr_dist, paired = paired)
+}
+
+# Helper to generate full tables for a timepoint
+build_tables_for_timepoint <- function(df, items_tbl, prefix = "") {
+
+  summaries <- pmap(
+    list(items_tbl$item, items_tbl$item),
+    function(item_label, item_label2){
+
+      stub <- paste0(prefix, gsub("[^A-Za-z0-9]+", "_", tolower(item_label)))
+
+      prt_var <- paste0("prt_", stub)
+      crr_var <- paste0("crr_", stub)
+      dis_var <- paste0("dis_", stub)
+
+      make_item_summary(df, prt_var, crr_var, dis_var, item_label)
+    }
+  )
+
+  paired_summary <- bind_rows(map(summaries, "paired"))
+
+  resp_dist_long <- bind_rows(
+    map2_dfr(summaries, items_tbl$item, ~ .x$prt_dist %>% mutate(item = .y)),
+    map2_dfr(summaries, items_tbl$item, ~ .x$crr_dist %>% mutate(item = .y))
+  ) %>%
+    mutate(resp = factor(resp, levels = 1:3, labels = c("Yes", "No", "Unsure"))) %>%
+    select(item, who, resp, n, pct)
+
+  list(paired_summary = paired_summary, resp_dist_long = resp_dist_long)
+}
+
+tab_M2 <- build_tables_for_timepoint(Dyads_M2, items_M2, prefix = "m2_")
+tab_M6 <- build_tables_for_timepoint(Dyads_M6, items_M6, prefix = "m6_")
+
+paired_summary_M2 <- tab_M2$paired_summary
+resp_dist_long_M2 <- tab_M2$resp_dist_long
+
+paired_summary_M6 <- tab_M6$paired_summary
+resp_dist_long_M6 <- tab_M6$resp_dist_long
+
+# Print
+# paired_summary
+# resp_dist_long
+paired_summary_M2
+resp_dist_long_M2
+paired_summary_M6
+resp_dist_long_M6
+#to get minor and major disagreements
+add_item_vars <- function(df, items_tbl, prefix = "") {
+
+  out <- df
+
+  for(i in seq_len(nrow(items_tbl))){
+
+    item  <- items_tbl$item[i]
+    pcol  <- items_tbl$prt_col[i]
+    ccol  <- items_tbl$crr_col[i]
+
+    # Safe syntactic names
+    stub <- paste0(prefix, gsub("[^A-Za-z0-9]+", "_", tolower(item)))
+
+    prt_var <- paste0("prt_", stub)
+    crr_var <- paste0("crr_", stub)
+    dis_var <- paste0("dis_", stub)
+    maj_dis_var <- paste0("maj_dis_", stub) # New: major disagreement variable
+    min_dis_var <- paste0("min_dis_", stub) # New: minor disagreement variable
+
+    out <- out %>%
+      mutate(
+        !!prt_var := clean_resp_1to3(.data[[pcol]]),
+        !!crr_var := clean_resp_1to3(.data[[ccol]]),
+        !!dis_var := if_else(!is.na(.data[[prt_var]]) & !is.na(.data[[crr_var]]) &
+                               .data[[prt_var]] != .data[[crr_var]], 1L,
+                             if_else(!is.na(.data[[prt_var]]) & !is.na(.data[[crr_var]]), 0L, NA_integer_)),
+        # New: Major disagreement (one says Yes, the other No)
+        !!maj_dis_var := if_else(!is.na(.data[[prt_var]]) & !is.na(.data[[crr_var]]),
+                                 if_else((.data[[prt_var]] == 1L & .data[[crr_var]] == 2L) |
+                                           (.data[[prt_var]] == 2L & .data[[crr_var]] == 1L), 1L, 0L),
+                                 NA_integer_),
+        # New: Minor disagreement (one says Unsure, the other Yes or No)
+        !!min_dis_var := if_else(!is.na(.data[[prt_var]]) & !is.na(.data[[crr_var]]),
+                                 if_else((.data[[prt_var]] == 3L & (.data[[crr_var]] == 1L | .data[[crr_var]] == 2L)) |
+                                           ((.data[[prt_var]] == 1L | .data[[prt_var]] == 2L) & .data[[crr_var]] == 3L), 1L, 0L),
+                                 NA_integer_)
+      )
+  }
+
+  out
+}
+
+# Re-apply the updated function to Dyads_M2 and Dyads_M6
+Dyads_M2 <- add_item_vars(Dyads_M2, items_M2, prefix = "m2_")
+Dyads_M6 <- add_item_vars(Dyads_M6, items_M6, prefix = "m6_")
+
+print("The 'add_item_vars' function has been updated and re-applied to Dyads_M2 and Dyads_M6.")
+make_item_summary <- function(df, prt_var, crr_var, dis_var, item_label) {
+
+  # Extract stub from dis_var to construct maj_dis_var and min_dis_var
+  # Assuming dis_var format is 'dis_stub' or 'm2_dis_stub'
+  stub_part <- gsub("^(dis_)|^(m[0-9]+_dis_)", "", dis_var)
+
+  # Reconstruct maj_dis_var and min_dis_var based on the extracted stub
+  # This handles both cases like 'dis_stub' and 'm2_dis_stub' correctly
+  prefix_part <- ifelse(grepl("^m[0-9]+_", dis_var), sub("^(m[0-9]+_dis_).*", "\\1", dis_var), "dis_")
+  prefix_part <- gsub("dis_", "", prefix_part) # Remove 'dis_' if present, to get just 'm2_' or empty
+
+  maj_dis_var <- paste0(prefix_part, "maj_dis_", stub_part)
+  min_dis_var <- paste0(prefix_part, "min_dis_", stub_part)
+
+  prt_dist <- df %>%
+    filter(!is.na(.data[[prt_var]])) %>%
+    count(resp = .data[[prt_var]]) %>%
+    mutate(pct = 100 * n / sum(n), who = "Participant")
+
+  crr_dist <- df %>%
+    filter(!is.na(.data[[crr_var]])) %>%
+    count(resp = .data[[crr_var]]) %>%
+    mutate(pct = 100 * n / sum(n), who = "Caregiver")
+
+  paired <- df %>%
+    filter(!is.na(.data[[dis_var]])) %>%
+    summarise(
+      paired_n = n(),
+      disagree_n = sum(.data[[dis_var]] == 1L),
+      disagree_pct = 100 * mean(.data[[dis_var]] == 1L),
+      # New: Major disagreement
+      major_disagree_n = sum(.data[[maj_dis_var]] == 1L, na.rm = TRUE),
+      major_disagree_pct = 100 * mean(.data[[maj_dis_var]] == 1L, na.rm = TRUE),
+      # New: Minor disagreement
+      minor_disagree_n = sum(.data[[min_dis_var]] == 1L, na.rm = TRUE),
+      minor_disagree_pct = 100 * mean(.data[[min_dis_var]] == 1L, na.rm = TRUE)
+    ) %>%
+    mutate(item = item_label)
+
+  list(prt_dist = prt_dist, crr_dist = crr_dist, paired = paired)
+}
+
+# Re-run build_tables_for_timepoint to apply the updated make_item_summary function
+tab_M2 <- build_tables_for_timepoint(Dyads_M2, items_M2, prefix = "m2_")
+tab_M6 <- build_tables_for_timepoint(Dyads_M6, items_M6, prefix = "m6_")
+
+paired_summary_M2 <- tab_M2$paired_summary
+resp_dist_long_M2 <- tab_M2$resp_dist_long
+
+paired_summary_M6 <- tab_M6$paired_summary
+resp_dist_long_M6 <- tab_M6$resp_dist_long
+
+# Print updated summaries
+print("Updated paired_summary_M2:")
+print(paired_summary_M2)
+print("Updated paired_summary_M6:")
+print(paired_summary_M6)
+print("Updated paired_summary_M2 (showing minor and major disagreement):")
+print(paired_summary_M2 %>% select(item, paired_n, disagree_pct, major_disagree_pct, minor_disagree_pct))
+
+print("Updated paired_summary_M6 (showing minor and major disagreement):")
+print(paired_summary_M6 %>% select(item, paired_n, disagree_pct, major_disagree_pct, minor_disagree_pct))
+#do the same for screening
+Dyads_Screening <- SS1 %>%
+  filter(ConsentSS1 == 1, CarerConsentSS1 == 1)
+
+items_scrn <- tibble::tribble(
+  ~item,                    ~prt_col,                         ~crr_col,
+  "Time commitment",        "TimeCommitmentPrtExpctScrn",     "TimeCommitmentCrrExpctScrn",
+  "Expected drug effect",   "PositiveEffectPrtExpctScrn",     "PositiveEffectCrrExpctScrn",
+  "Side effects",           "SideEffectsPrtExpctScrn",        "SideEffectsCrrExpctScrn",
+  "Travel distance concern","DistanceToClinicPrtExpctScrn",   "DistanceToClinicCrrExpctScrn"
+)
+
+Dyads_Screening <- add_item_vars(Dyads_Screening, items_scrn, prefix = "scrn_")
+
+print("Dyads_Screening dataframe with screening disagreement variables created.")
+print(head(Dyads_Screening))
+tab_Screening <- build_tables_for_timepoint(Dyads_Screening, items_scrn, prefix = "scrn_")
+
+paired_summary_Screening <- tab_Screening$paired_summary
+resp_dist_long_Screening <- tab_Screening$resp_dist_long
+
+print("Updated paired_summary for Screening (showing minor and major disagreement):")
+print(paired_summary_Screening %>% select(item, paired_n, disagree_pct, major_disagree_pct, minor_disagree_pct))
+paired_summary_Screening <- paired_summary_Screening %>%
+  mutate(agreement_pct = 100 - disagree_pct)
+
+paired_summary_M2 <- paired_summary_M2 %>%
+  mutate(agreement_pct = 100 - disagree_pct)
+
+paired_summary_M6 <- paired_summary_M6 %>%
+  mutate(agreement_pct = 100 - disagree_pct)
+
+print("Agreement percentages calculated for screening, Month 2, and Month 6 summaries.")
+print("Updated paired_summary_Screening with agreement_pct:")
+print(paired_summary_Screening %>% select(item, paired_n, disagree_pct, agreement_pct, major_disagree_pct, minor_disagree_pct))
+print("Updated paired_summary_M2 with agreement_pct:")
+print(paired_summary_M2 %>% select(item, paired_n, disagree_pct, agreement_pct, major_disagree_pct, minor_disagree_pct))
+print("Updated paired_summary_M6 with agreement_pct:")
+print(paired_summary_M6 %>% select(item, paired_n, disagree_pct, agreement_pct, major_disagree_pct, minor_disagree_pct))
+paired_summary_Screening_final <- paired_summary_Screening %>%
+  mutate(Timepoint = "Screening")
+
+paired_summary_M2_final <- paired_summary_M2 %>%
+  mutate(Timepoint = "Month 2")
+
+paired_summary_M6_final <- paired_summary_M6 %>%
+  mutate(Timepoint = "Month 6")
+
+combined_summary <- bind_rows(
+  paired_summary_Screening_final,
+  paired_summary_M2_final,
+  paired_summary_M6_final
+)
+
+print("Combined disagreement and agreement summary table (including N):")
+options(tibble.print_max = Inf) # Set option to print all rows
+print(combined_summary %>%
+        select(Timepoint, item, paired_n, `agreement_pct`, `minor_disagree_pct`, `major_disagree_pct`))
+options(tibble.print_max = 20) # Reset to default (or preferred) max rows
+#to get table with counts for each response 
+library(tidyr)
+
+wide_summary <- combined_summary %>%
+  pivot_wider(
+    id_cols = item,
+    names_from = Timepoint,
+    values_from = c(agreement_pct, minor_disagree_pct, major_disagree_pct)
+  )
+
+print("Reshaped combined_summary into wide_summary:")
+print(wide_summary)
+library(tidyr)
+
+wide_resp_dist <- combined_resp_dist %>%
+  mutate(Timepoint = factor(Timepoint, levels = c("Screening", "Month 2", "Month 6"))) %>%
+  pivot_wider(
+    id_cols = c(Timepoint, item, resp),
+    names_from = who,
+    values_from = n,
+    names_prefix = "n_"
+  ) %>%
+  arrange(Timepoint, item, resp)
+
+print("Side-by-Side Comparison of Participant and Caregiver Response Counts:")
+options(tibble.print_max = Inf) # Set option to print all rows
+print(wide_resp_dist)
+options(tibble.print_max = 20) # Reset to default max rows
